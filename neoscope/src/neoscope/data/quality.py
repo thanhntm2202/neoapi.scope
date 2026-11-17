@@ -16,7 +16,7 @@ class QF(StrEnum):
     ATO_ATC = "ATO_ATC"                  # giá mức 1 là ký tự ATO/ATC (hợp lệ theo phiên)
     DUPLICATE = "DUPLICATE"              # thông điệp lặp (bị loại khỏi curated)
     OUT_OF_ORDER = "OUT_OF_ORDER"        # arrival_ts lùi so với bản ghi trước cùng mã
-    LATE_ARRIVAL = "LATE_ARRIVAL"        # (synth) bản ghi đến muộn có chủ đích
+    LATE_ARRIVAL = "LATE_ARRIVAL"        # bộ đếm mang trạng thái cũ hơn bản ghi đã thấy → đến muộn
     STALE_GAP = "STALE_GAP"              # khoảng trống > ngưỡng trong phiên liên tục
     COUNTER_RESET = "COUNTER_RESET"      # bộ đếm lũy kế giảm (reset/phiên mới/lỗi)
     CROSSED_BOOK = "CROSSED_BOOK"        # bid1 >= ask1 ngoài ATO/ATC
@@ -31,9 +31,9 @@ FLAG_DESCRIPTIONS: dict[str, str] = {
     QF.ATO_ATC: "Giá mức 1 là 'ATO'/'ATC' — hợp lệ trong phiên định kỳ, loại khỏi tính toán sổ lệnh",
     QF.DUPLICATE: "Payload trùng hash trong cửa sổ khử lặp — loại bản ghi",
     QF.OUT_OF_ORDER: "Thông điệp đến không đúng thứ tự — giữ, sắp xếp lại theo (ts, seq)",
-    QF.LATE_ARRIVAL: "Thông điệp đến muộn (mô phỏng có chủ đích để thử pipeline)",
+    QF.LATE_ARRIVAL: "Bộ đếm lũy kế mang trạng thái CŨ hơn bản ghi đã thấy — thông điệp đến muộn so với thứ tự sự kiện; delta NaN, state không lùi (bảo toàn tổng khối lượng)",
     QF.STALE_GAP: "Không có cập nhật quá ngưỡng trong phiên LO — đánh dấu khoảng trống",
-    QF.COUNTER_RESET: "Bộ đếm lũy kế giảm — delta đặt NaN, không tính nhịp âm",
+    QF.COUNTER_RESET: "Bộ đếm lũy kế về 0 giữa phiên — reset thật (phiên mới/lỗi nguồn); delta NaN, state đặt lại",
     QF.CROSSED_BOOK: "Sổ lệnh bắt chéo ngoài phiên định kỳ — loại chỉ báo sổ lệnh tại tick",
     QF.BEYOND_BAND: "Giá ngoài [sàn, trần] — giữ bản ghi, loại giá trị phạm lệ",
     QF.MISSING_LEVEL: "Thiếu mức 2/3 — tính độ sâu trên các mức còn lại, ghi cờ",

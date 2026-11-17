@@ -90,23 +90,31 @@ class NeoMarketWS:
                     continue
                 self._last_msg_mono = loop.time()
                 msg = json.loads(raw)
-                channel = self._channel_of(msg)
-                if channel:
-                    self.writer.write(channel, msg)
+                # phòng thủ: một số phiên bản server bọc payload trong {"channel":..., "data":{...}}
+                payload = msg.get("data") if isinstance(msg.get("data"), dict) else msg
+                channel = self._channel_of(msg, payload)
+                if channel and channel != "unknown":
+                    self.writer.write(channel, payload)
                     self._msg_count += 1
                     if self._msg_count % 200 == 0:
                         self._write_status("connected")
+                elif channel == "unknown":
+                    self.writer.write("unknown", msg)  # giữ lại để chẩn đoán, không bỏ âm thầm
 
     @staticmethod
-    def _channel_of(msg: dict[str, Any]) -> str | None:
-        """Suy channel từ hình dạng payload (docs không nêu trường channel tường minh)."""
-        if "symbol" in msg:
+    def _channel_of(msg: dict[str, Any], payload: dict[str, Any] | None = None) -> str | None:
+        """Suy channel: ưu tiên trường channel tường minh, rồi đến hình dạng payload."""
+        explicit = msg.get("channel")
+        if isinstance(explicit, str) and explicit in {"stockInfo", "marketInfo", "marketVolume", "marketSession"}:
+            return explicit
+        p = payload if payload is not None else msg
+        if "symbol" in p:
             return "stockInfo"
-        if "indexCode" in msg and "advances" in msg:
+        if "indexCode" in p and "advances" in p:
             return "marketInfo"
-        if "indexCode" in msg and "volume" in msg:
+        if "indexCode" in p and "volume" in p:
             return "marketVolume"
-        if "marketStatus" in msg and "marketCode" in msg and "indexCode" not in msg:
+        if "marketStatus" in p and "marketCode" in p and "indexCode" not in p:
             return "marketSession"
         if msg.get("type") in {"auth", "sub", "unsub", "ping", "pong"}:
             return None

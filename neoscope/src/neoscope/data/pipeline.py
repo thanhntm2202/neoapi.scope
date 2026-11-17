@@ -6,6 +6,7 @@ băm Parquet kiểm chứng — tests/test_replay.py).
 """
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -37,10 +38,28 @@ def process_session(settings: Settings, session_dir: Path, force: bool = False) 
         stale_gap_s=float(settings.quality.stale_gap_s),
         dedup_window=int(settings.quality.dedup_window),
     )
+    # --- sắp xếp theo THỜI ĐIỂM SỰ KIỆN (arrival_ts) trước khi tính delta ---
+    # Bộ đếm lũy kế phải được hiệu theo thứ tự thời gian, không theo thứ tự
+    # ghi nhận: thông điệp đến sai thứ tự (arrival_ts lùi) nếu xử nguyên trạng
+    # sẽ tạo reset giả (delta NaN) và nhịp sau bị dồn gấp đôi. Ta gắn cờ
+    # OUT_OF_ORDER ở tầng RAW (so với max arrival_ts đã thấy theo seq) rồi
+    # mới sắp xếp — vừa giữ bằng chứng chất lượng, vừa đúng ngữ nghĩa delta.
+    recs = list(read_raw(session_dir, "stockInfo"))
+    n_raw = len(recs)
+    # Cờ OUT_OF_ORDER theo bằng chứng arrival: arrival_ts của mã lùi so với
+    # bản ghi trước ĐÓ CỦA CÙNG MÃ trong thứ tự ghi nhận (seq). Theo dõi
+    # riêng từng mã — không trộn nhịp của các mã khác nhau.
+    last_arr: dict[str, datetime] = {}
+    for rec in recs:  # recs theo thứ tự seq (thứ tự ghi nhận)
+        ats = datetime.fromisoformat(rec["arrival_ts"])
+        sym = rec["data"].get("symbol")
+        if sym is not None:
+            if sym in last_arr and ats < last_arr[sym]:
+                rec["_out_of_order"] = True
+            last_arr[sym] = max(last_arr.get(sym, ats), ats)
+    recs.sort(key=lambda r: (datetime.fromisoformat(r["arrival_ts"]), r["seq"]))
     rows = []
-    n_raw = 0
-    for rec in read_raw(session_dir, "stockInfo"):
-        n_raw += 1
+    for rec in recs:
         row = norm.normalize(rec)
         if row is not None:
             rows.append(row)

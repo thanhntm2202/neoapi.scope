@@ -21,7 +21,9 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from ..constants import session_of_time
 from ..finance.execution import ladder_walk, trading_costs_bps
+from ..data.store import search_ts
 from ..finance.microstructure import BPS
 
 
@@ -54,7 +56,7 @@ def simulate_order(
 
     `snaps` phải sắp xếp theo ts và chỉ chứa một mã trong một phiên.
     """
-    idx = int(snaps["ts"].searchsorted(ts0, side="right")) - 1
+    idx = search_ts(snaps["ts"], ts0, side="right") - 1
     if idx < 0:
         return SimResult(np.nan, np.nan, np.nan, 0, 1, 0, 0, 0, 0, ["NO_ARRIVAL_SNAP"], ok=False)
     arr = snaps.iloc[idx]
@@ -144,9 +146,13 @@ def generate_orders(
             continue
         for k in range(orders_per_symbol):
             ts = t_min + pd.Timedelta(seconds=float(rng.uniform(0, span)))
+            # loại lệnh có chân trời thực thi bắc qua nghỉ trưa (khoảng trống
+            # 90 phút không có thanh khoản — sẽ làm méo ước lượng thời gian khớp)
+            if session_of_time(ts.time()) != session_of_time((ts + pd.Timedelta(seconds=horizon_s)).time()):
+                continue
             side = int(rng.choice([-1, 1]))
             notional = float(np.exp(rng.uniform(np.log(size_range_vnd[0]), np.log(size_range_vnd[1]))))
-            idx = int(s["ts"].searchsorted(ts, side="right")) - 1
+            idx = search_ts(s["ts"], ts, side="right") - 1
             if idx < 0:
                 continue
             mid = s.iloc[idx]["mid"]

@@ -87,7 +87,8 @@ class SessionSimulator:
             [("DEPTH_EVAPORATION", int(ev["evap_per_session"])),
              ("TRADE_BURST", int(ev["burst_per_session"])),
              ("FLASH_MOVE", int(ev["flash_per_session"])),
-             ("FOREIGN_BURST", int(ev["foreign_burst_per_session"]))]
+             ("FOREIGN_BURST", int(ev["foreign_burst_per_session"])),
+             ("OBI_SHOCK", int(ev.get("obi_shock_per_session", 2)))]
         )
         for etype, count in plan:
             for _ in range(count):
@@ -96,7 +97,8 @@ class SessionSimulator:
                 dur = {"DEPTH_EVAPORATION": int(self.rng.integers(36, 96)),   # 3–8 phút
                        "TRADE_BURST": int(self.rng.integers(12, 36)),          # 1–3 phút
                        "FLASH_MOVE": int(self.rng.integers(6, 12)),            # 30–60s
-                       "FOREIGN_BURST": int(self.rng.integers(6, 18))}[etype]
+                       "FOREIGN_BURST": int(self.rng.integers(6, 18)),
+                       "OBI_SHOCK": int(self.rng.integers(12, 36))}[etype]
                 direction = int(self.rng.choice([-1, 1]))
                 self.events.append({
                     "type": etype, "symbol": sym,
@@ -127,10 +129,15 @@ class SessionSimulator:
 
         obi = np.empty(n)
         mid = np.empty(n)
-        spread_ticks = np.empty(n, dtype=int)
+        # BUGFIX: np.empty chứa GIÁ TRỊ RÁC của bộ nhớ chưa khởi tạo → spread
+        # rác khổng lồ → sổ lệnh bị kẹp trần/sàn → realized IS ~700 bps giả tạo.
+        # Khởi tạo tường minh 0 và tách phần spread cộng thêm của sự kiện.
+        spread_ticks = np.zeros(n, dtype=int)
+        extra_spread = np.zeros(n, dtype=int)
         depth_mult = np.ones(n)
         trade_mult = np.ones(n)
         extra_drift = np.zeros(n)
+        obi_force = np.full(n, np.nan)
 
         # áp dụng sự kiện vào tham số
         for e in self.events:
@@ -139,7 +146,7 @@ class SessionSimulator:
             s, t = e["start_step"], e["end_step"]
             if e["type"] == "DEPTH_EVAPORATION":
                 depth_mult[s:t + 1] *= 0.15
-                spread_ticks[s:t + 1] += 2
+                extra_spread[s:t + 1] += 2
             elif e["type"] == "TRADE_BURST":
                 trade_mult[s:t + 1] *= 6.0
                 extra_drift[s:t + 1] += e["direction"] * sigma_step[s:t + 1] * 0.8
@@ -148,18 +155,23 @@ class SessionSimulator:
                 extra_drift[s + 1:min(s + 13, n)] -= e["direction"] * rng.uniform(40, 90) / 12
             elif e["type"] == "FOREIGN_BURST":
                 pass  # xử lý ở luồng ngoại
+            elif e["type"] == "OBI_SHOCK":
+                obi_force[s:t + 1] = e["direction"] * 0.9
 
         o = 0.0
         m = ref
         base_spread = 1 if self.cfg.group_of(symbol) == "large" else 2
         for i in range(n):
-            o = float(np.clip(0.97 * o + rng.normal(0, 0.12), -0.95, 0.95))
+            o = float(np.clip(0.97 * o + rng.normal(0, 0.06), -0.95, 0.95))
+            if np.isfinite(obi_force[i]):
+                o = float(np.clip(obi_force[i] + rng.normal(0, 0.03), -0.95, 0.95))
             r_bps = kappa * o + sigma_step[i] * rng.normal() + extra_drift[i]
             m = float(np.clip(m * (1 + r_bps / 1e4), floor, ceiling))
             obi[i] = o
             mid[i] = m
-            if spread_ticks[i] == 0:
-                spread_ticks[i] = base_spread + (1 if rng.random() < (0.15 if base_spread == 1 else 0.35) else 0)
+            spread_ticks[i] = (base_spread
+                               + (1 if rng.random() < (0.15 if base_spread == 1 else 0.35) else 0)
+                               + extra_spread[i])
 
         # sổ lệnh 3 mức
         book: dict[str, np.ndarray] = {}
@@ -208,7 +220,7 @@ class SessionSimulator:
         f_sell_vol = np.where(f_active & ~f_buy, f_size, 0)
         for e in self.events:
             if e["symbol"] == symbol and e["type"] == "FOREIGN_BURST":
-                chunk = int(rng.integers(200, 800)) * LOT_SIZE
+                chunk = int(rng.integers(1000, 3000)) * LOT_SIZE  # burst ngoại cực đoan, tách khỏi đuôi thường
                 if e["direction"] > 0:
                     f_buy_vol[e["start_step"]] += chunk
                 else:

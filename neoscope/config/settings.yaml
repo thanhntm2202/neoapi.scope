@@ -50,6 +50,7 @@ synth:                        # chỉ dùng ở chế độ SYNTHETIC — luôn 
     burst_per_session: 2      # bùng nổ khối lượng
     flash_per_session: 1      # nhảy giá nhanh rồi hồi một phần
     foreign_burst_per_session: 2
+    obi_shock_per_session: 2    # cú sốc mất cân bằng sổ lệnh (OBI tiến về ±0.9)
 
 quality:
   stale_gap_s: 30             # khoảng trống dữ liệu trong phiên LO bị coi là bất thường
@@ -64,6 +65,7 @@ alerts:
   pct_threshold: 0.99
   persistence_n: 3
   cooldown_s: 60
+  foreign_tail_mult: 2.0      # FOREIGN_BURST: |net| >= 2×p99 của bản ghi ngoại KHÁC 0 (cổng đuôi, docs/thresholds.md)
   warmup_sessions: 1          # phiên đầu chỉ tích lũy baseline, không cảnh báo
   types: [SPREAD_WIDEN, DEPTH_EVAPORATION, OBI_EXTREME, TRADE_BURST, FOREIGN_BURST]
 
@@ -73,7 +75,8 @@ execution:
   pi_z: 1.6449                # z 90% hai phía
   fee_rate: 0.0015            # phí môi giới giả định 0.15% (cấu hình được, dải phổ biến 0.1–0.35%)
   sell_tax_rate: 0.001        # thuế TNCN chuyển nhượng CK 0.1% giá bán (luật VN hiện hành)
-  order_sizes_vnd: [50000000, 2000000000]
+  order_sizes_vnd: [50000000, 5000000000]   # 50 triệu → 5 tỷ: dải retail→khối tổ chức,
+                                          # đủ để mẫu vượt sổ hiển thị (regime thú vị) được lấy mẫu dày
   orders_per_symbol_session: 30
 
 validation:

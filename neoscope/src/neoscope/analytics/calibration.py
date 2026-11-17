@@ -23,6 +23,7 @@ import pandas as pd
 from loguru import logger
 
 from ..config import Settings
+from ..data.store import search_ts
 from ..finance.execution import expected_is_bps, ladder_walk
 from ..simulator.matching import generate_orders, simulate_order
 
@@ -93,7 +94,7 @@ def static_features(order: dict, snaps_sym: pd.DataFrame, bars_sym: pd.DataFrame
                     settings: Settings) -> dict[str, Any] | None:
     """Phần đặc trưng KHÔNG phụ thuộc fold: sổ lệnh tại t0, hs, OBI, σ trượt."""
     ts0 = order["ts"]
-    idx = int(snaps_sym["ts"].searchsorted(ts0, side="right")) - 1
+    idx = search_ts(snaps_sym["ts"], ts0, side="right") - 1
     if idx < 0:
         return None
     arr = snaps_sym.iloc[idx]
@@ -115,8 +116,11 @@ def static_features(order: dict, snaps_sym: pd.DataFrame, bars_sym: pd.DataFrame
     hs = float(arr["spread_bps"]) / 2.0 if pd.notna(arr["spread_bps"]) else np.nan
     obi_now = float(arr["obi"]) if pd.notna(arr["obi"]) else 0.0
     bucket = int(arr["bucket"])
-    # σ trượt trong phiên tại bar gần nhất ≤ t0
-    bs = bars_sym[bars_sym["bar_ts"] <= ts0]
+    # σ trượt trong phiên — CHỈ dùng bar ĐÃ HOÀN CHỈNH tại t0 (chống nhìn trước:
+    # bar chứa t0 có mid_close ở cuối phút, tức tương lai so với thời điểm đặt lệnh)
+    freq_s = int(settings.bars.freq_s)
+    completed = bars_sym["bar_ts"] + pd.Timedelta(seconds=freq_s) <= ts0
+    bs = bars_sym[completed]
     sig = np.nan
     if len(bs) >= 5:
         sd = bs["ret_bps"].tail(15).std()
@@ -179,14 +183,22 @@ def run_walk_forward(settings: Settings, snaps_all: pd.DataFrame,
     symbols = settings.watchlist()
 
     # ---- 1) sinh lệnh + mô phỏng realized cho MỌI phiên (seed tất định) ----
+    # Khung HẸP cho mô phỏng: chỉ các cột cần cho sổ lệnh/khớp lệnh/đặc trưng.
+    # Tránh giữ bản sao đầy đủ (56 cột, gồm flags object) của mọi mã-phiên
+    # trong bộ nhớ — giảm ~4× RAM đỉnh, kết quả không đổi (có test tương đương).
+    sim_cols = ["ts", "symbol", "session_date", "session", "bucket", "mid",
+                "spread_bps", "obi", "d_vol",
+                "bid1", "bid2", "bid3", "ask1", "ask2", "ask3",
+                "bidvol1", "bidvol2", "bidvol3", "askvol1", "askvol2", "askvol3"]
+    snaps_sim = snaps_all[sim_cols]
     orders_rows: list[dict] = []
     feats: dict[str, dict] = {}
     snaps_by = { (ds, sym): g.sort_values("ts").reset_index(drop=True)
-                 for (ds, sym), g in snaps_all.groupby(["session_date", "symbol"]) }
+                 for (ds, sym), g in snaps_sim.groupby(["session_date", "symbol"]) }
     bars_by = { (ds, sym): g.sort_values("bar_ts").reset_index(drop=True)
                 for (ds, sym), g in bars_all.groupby(["session_date", "symbol"]) }
     for i, ds in enumerate(dates):
-        snap_day = snaps_all[snaps_all["session_date"] == ds]
+        snap_day = snaps_sim[snaps_sim["session_date"] == ds]
         orders = generate_orders(
             snap_day, symbols, int(ex.orders_per_symbol_session),
             (float(ex.order_sizes_vnd[0]), float(ex.order_sizes_vnd[1])),

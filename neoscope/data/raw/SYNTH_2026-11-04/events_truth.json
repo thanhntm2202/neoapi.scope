@@ -13,69 +13,93 @@
     },
     {
       "type": "DEPTH_EVAPORATION",
-      "symbol": "HPG",
-      "start_ts": "2026-11-04T10:26:35+07:00",
-      "end_ts": "2026-11-04T10:30:55+07:00",
-      "start_step": 859,
-      "end_step": 911,
-      "direction": 1,
-      "synthetic": true
-    },
-    {
-      "type": "TRADE_BURST",
-      "symbol": "DIG",
-      "start_ts": "2026-11-04T10:04:10+07:00",
-      "end_ts": "2026-11-04T10:07:05+07:00",
-      "start_step": 590,
-      "end_step": 625,
+      "symbol": "FPT",
+      "start_ts": "2026-11-04T10:17:20+07:00",
+      "end_ts": "2026-11-04T10:24:50+07:00",
+      "start_step": 748,
+      "end_step": 838,
       "direction": -1,
       "synthetic": true
     },
     {
       "type": "TRADE_BURST",
-      "symbol": "HPG",
-      "start_ts": "2026-11-04T11:18:55+07:00",
-      "end_ts": "2026-11-04T11:21:00+07:00",
-      "start_step": 1487,
-      "end_step": 1512,
+      "symbol": "HCM",
+      "start_ts": "2026-11-04T14:14:20+07:00",
+      "end_ts": "2026-11-04T14:16:40+07:00",
+      "start_step": 2512,
+      "end_step": 2540,
+      "direction": 1,
+      "synthetic": true
+    },
+    {
+      "type": "TRADE_BURST",
+      "symbol": "PDR",
+      "start_ts": "2026-11-04T10:02:50+07:00",
+      "end_ts": "2026-11-04T10:04:50+07:00",
+      "start_step": 574,
+      "end_step": 598,
       "direction": 1,
       "synthetic": true
     },
     {
       "type": "FLASH_MOVE",
-      "symbol": "PDR",
-      "start_ts": "2026-11-04T09:30:15+07:00",
-      "end_ts": "2026-11-04T09:31:10+07:00",
-      "start_step": 183,
-      "end_step": 194,
+      "symbol": "NLG",
+      "start_ts": "2026-11-04T09:31:05+07:00",
+      "end_ts": "2026-11-04T09:31:50+07:00",
+      "start_step": 193,
+      "end_step": 202,
       "direction": 1,
       "synthetic": true
     },
     {
       "type": "FOREIGN_BURST",
-      "symbol": "FPT",
-      "start_ts": "2026-11-04T11:15:30+07:00",
-      "end_ts": "2026-11-04T11:16:30+07:00",
-      "start_step": 1446,
-      "end_step": 1458,
-      "direction": -1,
+      "symbol": "PDR",
+      "start_ts": "2026-11-04T09:38:55+07:00",
+      "end_ts": "2026-11-04T09:39:25+07:00",
+      "start_step": 287,
+      "end_step": 293,
+      "direction": 1,
       "synthetic": true
     },
     {
       "type": "FOREIGN_BURST",
-      "symbol": "DIG",
-      "start_ts": "2026-11-04T10:58:20+07:00",
-      "end_ts": "2026-11-04T10:59:20+07:00",
-      "start_step": 1240,
-      "end_step": 1252,
+      "symbol": "HPG",
+      "start_ts": "2026-11-04T13:34:20+07:00",
+      "end_ts": "2026-11-04T13:35:45+07:00",
+      "start_step": 2032,
+      "end_step": 2049,
       "direction": -1,
+      "synthetic": true
+    },
+    {
+      "type": "OBI_SHOCK",
+      "symbol": "HPG",
+      "start_ts": "2026-11-04T11:23:05+07:00",
+      "end_ts": "2026-11-04T11:24:25+07:00",
+      "start_step": 1537,
+      "end_step": 1553,
+      "direction": -1,
+      "synthetic": true
+    },
+    {
+      "type": "OBI_SHOCK",
+      "symbol": "PDR",
+      "start_ts": "2026-11-04T10:17:25+07:00",
+      "end_ts": "2026-11-04T10:19:50+07:00",
+      "start_step": 749,
+      "end_step": 778,
+      "direction": 1,
       "synthetic": true
     }
   ],
   "gaps": {
-    "HPG": [
-      370,
-      380
+    "FPT": [
+      129,
+      139
+    ],
+    "SSI": [
+      849,
+      857
     ]
   }
 }

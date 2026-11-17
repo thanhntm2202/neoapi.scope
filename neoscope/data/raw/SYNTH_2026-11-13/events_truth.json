@@ -13,73 +13,93 @@
     },
     {
       "type": "DEPTH_EVAPORATION",
-      "symbol": "DIG",
-      "start_ts": "2026-11-13T13:58:30+07:00",
-      "end_ts": "2026-11-13T14:02:45+07:00",
-      "start_step": 2322,
-      "end_step": 2373,
-      "direction": -1,
-      "synthetic": true
-    },
-    {
-      "type": "TRADE_BURST",
-      "symbol": "SSI",
-      "start_ts": "2026-11-13T14:08:00+07:00",
-      "end_ts": "2026-11-13T14:10:35+07:00",
-      "start_step": 2436,
-      "end_step": 2467,
-      "direction": -1,
-      "synthetic": true
-    },
-    {
-      "type": "TRADE_BURST",
-      "symbol": "VCB",
-      "start_ts": "2026-11-13T11:28:10+07:00",
-      "end_ts": "2026-11-13T13:00:45+07:00",
-      "start_step": 1598,
-      "end_step": 1629,
+      "symbol": "HCM",
+      "start_ts": "2026-11-13T10:13:00+07:00",
+      "end_ts": "2026-11-13T10:16:05+07:00",
+      "start_step": 696,
+      "end_step": 733,
       "direction": 1,
+      "synthetic": true
+    },
+    {
+      "type": "TRADE_BURST",
+      "symbol": "HPG",
+      "start_ts": "2026-11-13T13:36:15+07:00",
+      "end_ts": "2026-11-13T13:37:35+07:00",
+      "start_step": 2055,
+      "end_step": 2071,
+      "direction": -1,
+      "synthetic": true
+    },
+    {
+      "type": "TRADE_BURST",
+      "symbol": "NLG",
+      "start_ts": "2026-11-13T11:05:10+07:00",
+      "end_ts": "2026-11-13T11:07:15+07:00",
+      "start_step": 1322,
+      "end_step": 1347,
+      "direction": -1,
       "synthetic": true
     },
     {
       "type": "FLASH_MOVE",
-      "symbol": "PDR",
-      "start_ts": "2026-11-13T13:05:10+07:00",
-      "end_ts": "2026-11-13T13:05:45+07:00",
-      "start_step": 1682,
-      "end_step": 1689,
-      "direction": 1,
-      "synthetic": true
-    },
-    {
-      "type": "FOREIGN_BURST",
-      "symbol": "HCM",
-      "start_ts": "2026-11-13T11:07:20+07:00",
-      "end_ts": "2026-11-13T11:08:40+07:00",
-      "start_step": 1348,
-      "end_step": 1364,
+      "symbol": "FPT",
+      "start_ts": "2026-11-13T13:03:05+07:00",
+      "end_ts": "2026-11-13T13:03:50+07:00",
+      "start_step": 1657,
+      "end_step": 1666,
       "direction": -1,
       "synthetic": true
     },
     {
       "type": "FOREIGN_BURST",
+      "symbol": "NLG",
+      "start_ts": "2026-11-13T09:53:40+07:00",
+      "end_ts": "2026-11-13T09:54:35+07:00",
+      "start_step": 464,
+      "end_step": 475,
+      "direction": 1,
+      "synthetic": true
+    },
+    {
+      "type": "FOREIGN_BURST",
+      "symbol": "FPT",
+      "start_ts": "2026-11-13T09:29:50+07:00",
+      "end_ts": "2026-11-13T09:30:40+07:00",
+      "start_step": 178,
+      "end_step": 188,
+      "direction": 1,
+      "synthetic": true
+    },
+    {
+      "type": "OBI_SHOCK",
+      "symbol": "DIG",
+      "start_ts": "2026-11-13T11:14:05+07:00",
+      "end_ts": "2026-11-13T11:15:35+07:00",
+      "start_step": 1429,
+      "end_step": 1447,
+      "direction": -1,
+      "synthetic": true
+    },
+    {
+      "type": "OBI_SHOCK",
       "symbol": "HPG",
-      "start_ts": "2026-11-13T13:50:55+07:00",
-      "end_ts": "2026-11-13T13:52:10+07:00",
-      "start_step": 2231,
-      "end_step": 2246,
+      "start_ts": "2026-11-13T13:14:35+07:00",
+      "end_ts": "2026-11-13T13:16:50+07:00",
+      "start_step": 1795,
+      "end_step": 1822,
       "direction": -1,
       "synthetic": true
     }
   ],
   "gaps": {
-    "DIG": [
-      1478,
-      1488
+    "SSI": [
+      1165,
+      1171
     ],
-    "VCB": [
-      366,
-      372
+    "NLG": [
+      1091,
+      1097
     ]
   }
 }

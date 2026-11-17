@@ -14,6 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterator
 
+import numpy as np
 import pandas as pd
 
 from ..constants import VN_TZ
@@ -21,6 +22,21 @@ from ..constants import VN_TZ
 
 def now_vn() -> datetime:
     return datetime.now(VN_TZ)
+
+
+def search_ts(series: pd.Series, ts: pd.Timestamp, side: str = "right") -> int:
+    """searchsorted BỀN VỮNG với khác biệt đơn vị datetime (us ↔ ns) và múi giờ.
+
+    Parquet (pyarrow) trả datetime64[us] trong khi Timestamp tính từ giây thực
+    mang độ phân giải ns → Series.searchsorted của pandas 2.x ném
+    'Cannot losslessly convert units'. So sánh bằng int64 epoch UTC (asi8 ×
+    hệ số quy đổi về ns) — không nhập nhằng múi giờ, không cảnh báo, O(log n).
+    """
+    arr = series.array
+    scale = {"s": 1_000_000_000, "ms": 1_000_000, "us": 1_000, "ns": 1}[arr.unit]
+    vals_ns = arr.asi8 * scale
+    needle_ns = pd.Timestamp(ts).value  # ns kể từ epoch UTC
+    return int(np.searchsorted(vals_ns, needle_ns, side=side))
 
 
 def mode_prefix(mode: str) -> str:

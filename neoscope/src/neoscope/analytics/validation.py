@@ -35,9 +35,38 @@ def metrics_table(preds: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def metrics_by_coverage(preds: pd.DataFrame) -> pd.DataFrame:
+    """Sai số PHÂN RÃ theo chế độ phủ sổ — phân rã trung thực của kiểm chứng.
+
+    - in_book (coverage = 1): lệnh khớp trọn trong sổ hiển thị → theo giả định
+      quét toàn bộ KL hiển thị, realized == dự báo ladder MỘT CÁCH TẤT ĐỊNH.
+      Sai số ~0 ở đây là HỆ QUẢ CỦA GIẢ ĐỊNH, không phải bằng chứng mô hình tốt.
+    - beyond_book (coverage < 1): phần dư thực thi dần → trôi giá + rủi ro thời
+      điểm. ĐÂY là regime mà mô hình full phải chứng minh giá trị gia tăng.
+    Công bố công khai để không trình bày kết quả vượt quá khả năng mô hình.
+    """
+    # mọi dòng preds đã mang coverage của mô hình full (ghi trong run_walk_forward)
+    p = preds.copy()
+    p["regime"] = np.where(p["coverage"] >= 1.0, "in_book", "beyond_book")
+    rows = []
+    for (model, regime), g in p.groupby(["model", "regime"]):
+        e = g["e_is_bps"] - g["realized_is_bps"]
+        rows.append({"model": model, "regime": regime, "n": len(g),
+                     "mae_bps": float(e.abs().mean()), "rmse_bps": float(np.sqrt((e ** 2).mean())),
+                     "bias_bps": float(e.mean())})
+    return pd.DataFrame(rows)
+
+
 def session_bootstrap(preds: pd.DataFrame, model_a: str, model_b: str,
-                      reps: int = 2000, seed: int = 7) -> dict:
-    """So sánh MAE cặp đôi theo cụm phiên: Δ = MAE_a − MAE_b (âm = a tốt hơn)."""
+                      reps: int = 2000, seed: int = 7,
+                      order_ids: set | None = None) -> dict:
+    """So sánh MAE cặp đôi theo cụm phiên: Δ = MAE_a − MAE_b (âm = a tốt hơn).
+
+    `order_ids`: tập order_id cần giữ (vd chỉ lệnh vượt sổ) — lọc THEO LỆNH
+    để cả hai mô hình cùng bị lọc nhất quán; cụm phiên vẫn là đơn vị resample.
+    """
+    if order_ids is not None:
+        preds = preds[preds["order_id"].isin(order_ids)]
     a = preds[preds["model"] == model_a].copy()
     b = preds[preds["model"] == model_b].copy()
     a["loss"] = (a["e_is_bps"] - a["realized_is_bps"]).abs()
@@ -45,6 +74,10 @@ def session_bootstrap(preds: pd.DataFrame, model_a: str, model_b: str,
     la = a.groupby("session_date")["loss"].mean()
     lb = b.groupby("session_date")["loss"].mean()
     d = (la - lb).dropna()
+    if len(d) == 0:
+        return {"model_a": model_a, "model_b": model_b, "delta_mae_bps": np.nan,
+                "ci95_lo": np.nan, "ci95_hi": np.nan, "p_two_sided": np.nan,
+                "n_sessions": 0, "per_session": {}}
     sessions = d.index.to_numpy()
     vals = d.to_numpy()
     rng = np.random.default_rng(seed)
@@ -69,13 +102,18 @@ def _wilson(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
 
 
 def pi_coverage(preds: pd.DataFrame) -> pd.DataFrame:
-    full = preds[preds["model"] == "full"]
+    """Độ phủ PI 90% + Wilson CI. Tách regime: lệnh trong sổ có PI suy biến
+    (bề rộng 0, phủ tất định) — độ phủ CÓ Ý NGHĨA là ở regime vượt sổ."""
+    full = preds[preds["model"] == "full"].copy()
+    full["regime"] = np.where(full["coverage"] >= 1.0, "in_book", "beyond_book")
     rows = []
-    for grp, g in [("ALL", full)] + list(full.groupby("group")):
+    slices = [("ALL", "all", full)] + [(grp, "all", g) for grp, g in full.groupby("group")]
+    slices += [(f"ALL:{reg}", reg, g) for reg, g in full.groupby("regime")]
+    for grp, reg, g in slices:
         ok = ((g["realized_is_bps"] >= g["lo_bps"]) & (g["realized_is_bps"] <= g["hi_bps"])).sum()
         n = len(g)
         lo, hi = _wilson(int(ok), n)
-        rows.append({"group": grp, "n": n, "covered": int(ok),
+        rows.append({"group": grp, "regime": reg, "n": n, "covered": int(ok),
                      "coverage": float(ok / n) if n else np.nan,
                      "wilson_lo": lo, "wilson_hi": hi,
                      "mean_width_bps": float((g["hi_bps"] - g["lo_bps"]).mean())})
@@ -96,7 +134,7 @@ def lhs_forward_ic(bars_lhs: pd.DataFrame, test_dates: list[str]) -> pd.DataFram
         ics = []
         for _, g in day.groupby("bar_ts"):
             m = g[["lhs", "fwd_illiq"]].dropna()
-            if len(m) >= 6:
+            if len(m) >= 6 and m["lhs"].nunique() > 1 and m["fwd_illiq"].nunique() > 1:
                 rho, _ = stats.spearmanr(m["lhs"], m["fwd_illiq"])
                 if np.isfinite(rho):
                     ics.append(rho)
@@ -130,7 +168,7 @@ def obi_direction_table(bars: pd.DataFrame, test_dates: list[str]) -> pd.DataFra
 ALERT_EVENT_MAP = {
     "SPREAD_WIDEN": {"DEPTH_EVAPORATION", "FLASH_MOVE"},
     "DEPTH_EVAPORATION": {"DEPTH_EVAPORATION"},
-    "OBI_EXTREME": {"DEPTH_EVAPORATION", "TRADE_BURST", "FLASH_MOVE"},
+    "OBI_EXTREME": {"OBI_SHOCK"},
     "TRADE_BURST": {"TRADE_BURST", "FLASH_MOVE"},
     "FOREIGN_BURST": {"FOREIGN_BURST"},
 }
@@ -186,7 +224,9 @@ def build_summary(settings: Settings, metrics: pd.DataFrame, boot_full_ladder: d
                   obi_tab: pd.DataFrame, pr: pd.DataFrame, fold_params: pd.DataFrame,
                   orders: pd.DataFrame, preds: pd.DataFrame,
                   lhs_sens: pd.DataFrame, resilience_stats: dict,
-                  quality_meta: pd.DataFrame, snaps_all: pd.DataFrame) -> dict:
+                  quality_meta: pd.DataFrame, snaps_all: pd.DataFrame,
+                  metrics_coverage: pd.DataFrame | None = None,
+                  boot_beyond: dict | None = None) -> dict:
     dates = sorted(snaps_all["session_date"].unique())
     test_dates = dates[int(settings.validation.min_train_sessions):]
     summary = {
@@ -208,6 +248,8 @@ def build_summary(settings: Settings, metrics: pd.DataFrame, boot_full_ladder: d
                    "mean_notional_vnd": float(orders["notional_vnd"].mean()) if len(orders) else None,
                    "mean_unfilled_frac": float(orders["unfilled_frac"].mean()) if len(orders) else None},
         "metrics": metrics.to_dict(orient="records"),
+        "metrics_by_coverage": metrics_coverage.to_dict(orient="records") if metrics_coverage is not None else [],
+        "bootstrap_full_vs_ladder_beyond_book": boot_beyond or {},
         "bootstrap_full_vs_ladder": boot_full_ladder,
         "bootstrap_full_vs_naive": boot_full_naive,
         "pi_coverage": coverage.to_dict(orient="records"),

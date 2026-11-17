@@ -1,12 +1,12 @@
 Metadata-Version: 2.4
 Name: neoscope
-Version: 1.0.0
+Version: 1.1.0
 Summary: NeoScope — Order-book liquidity X-ray & execution-cost laboratory on VPBankS NEO API (academic prototype, no real orders).
 Author: NeoScope Project
 License: MIT
 Requires-Python: >=3.11
 Description-Content-Type: text/markdown
-Requires-Dist: pandas>=2.0
+Requires-Dist: pandas<3,>=2.2
 Requires-Dist: numpy>=1.24
 Requires-Dist: scipy>=1.10
 Requires-Dist: pyarrow>=14
@@ -21,3 +21,6 @@ Requires-Dist: PyYAML>=6.0
 Provides-Extra: dev
 Requires-Dist: pytest>=8; extra == "dev"
 Requires-Dist: python-docx>=1.1; extra == "dev"
+Requires-Dist: matplotlib>=3.8; extra == "dev"
+
+# NeoScope

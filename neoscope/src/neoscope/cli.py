@@ -93,10 +93,15 @@ def cmd_validate(args) -> None:
 
     metrics = V.metrics_table(preds)
     write_parquet(metrics, settings.results_path("metrics.parquet"))
+    metrics_cov = V.metrics_by_coverage(preds)
+    write_parquet(metrics_cov, settings.results_path("metrics_coverage.parquet"))
     reps = int(settings.validation.bootstrap_reps)
     seed = int(settings.validation.bootstrap_seed)
     boot_fl = V.session_bootstrap(preds, "full", "ladder_only", reps, seed)
     boot_fn = V.session_bootstrap(preds, "full", "naive_mid", reps, seed)
+    full_rows = preds[preds["model"] == "full"]
+    beyond_ids = set(full_rows.loc[full_rows["coverage"] < 1.0, "order_id"])
+    boot_beyond = V.session_bootstrap(preds, "full", "ladder_only", reps, seed, order_ids=beyond_ids)
     coverage = V.pi_coverage(preds)
     write_parquet(coverage, settings.results_path("coverage.parquet"))
     dates = sorted(snaps["session_date"].unique())
@@ -123,6 +128,7 @@ def cmd_validate(args) -> None:
         settings, metrics, boot_fl, boot_fn, coverage, ic, obi_tab, pr,
         fold_params, orders, preds, lhs_sens, res_stats,
         data["quality_meta"], snaps,
+        metrics_coverage=metrics_cov, boot_beyond=boot_beyond,
     )
     out = settings.results_path("summary.json")
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -131,8 +137,12 @@ def cmd_validate(args) -> None:
     for _, r in metrics[metrics["group"] == "ALL"].iterrows():
         logger.info("  {:12s} MAE={:7.2f} bps  RMSE={:7.2f}  bias={:+7.2f}",
                     r["model"], r["mae_bps"], r["rmse_bps"], r["bias_bps"])
-    logger.info("  ΔMAE full−ladder = {:+.2f} bps, CI95 [{:.2f}, {:.2f}], p={:.3f}",
+    logger.info("  ΔMAE full−ladder (tất cả) = {:+.2f} bps, CI95 [{:.2f}, {:.2f}], p={:.3f}",
                 boot_fl["delta_mae_bps"], boot_fl["ci95_lo"], boot_fl["ci95_hi"], boot_fl["p_two_sided"])
+    if boot_beyond.get("n_sessions"):
+        logger.info("  ΔMAE full−ladder (VƯỢT SỔ, n={} lệnh) = {:+.2f} bps, CI95 [{:.2f}, {:.2f}], p={:.3f}",
+                    len(beyond_ids), boot_beyond["delta_mae_bps"], boot_beyond["ci95_lo"],
+                    boot_beyond["ci95_hi"], boot_beyond["p_two_sided"])
     cov_all = coverage[coverage["group"] == "ALL"].iloc[0]
     logger.info("  Độ phủ PI 90%: {:.1%} (Wilson [{:.1%}, {:.1%}])",
                 cov_all["coverage"], cov_all["wilson_lo"], cov_all["wilson_hi"])
@@ -189,7 +199,10 @@ def cmd_app(args) -> None:
     app_path = Path(__file__).parent / "app" / "main.py"
     cmd = [sys.executable, "-m", "streamlit", "run", str(app_path),
            "--server.address", "0.0.0.0", "--server.port", str(args.port),
-           "--server.headless", "true", "--browser.gatherUsageStats", "false"]
+           "--server.headless", "true", "--browser.gatherUsageStats", "false",
+           # Cho phép chạy sau reverse-proxy/sandbox preview (không ảnh hưởng
+           # bảo mật dữ liệu: app chỉ ĐỌC dữ liệu thị trường, không nhận lệnh).
+           "--server.enableCORS", "false", "--server.enableXsrfProtection", "false"]
     subprocess.run(cmd, cwd=REPO_ROOT, check=False)
 
 
