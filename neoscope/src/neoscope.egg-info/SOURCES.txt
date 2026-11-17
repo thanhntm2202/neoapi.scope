@@ -38,8 +38,12 @@ src/neoscope/simulator/__init__.py
 src/neoscope/simulator/matching.py
 src/neoscope/synth/__init__.py
 src/neoscope/synth/generator.py
+tests/test_alerts.py
+tests/test_chaos.py
 tests/test_execution.py
 tests/test_liquidity.py
 tests/test_microstructure.py
 tests/test_normalize_traps.py
+tests/test_replay.py
 tests/test_store_and_bars.py
+tests/test_synth.py
