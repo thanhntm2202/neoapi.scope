@@ -15,9 +15,10 @@ Cơ sở (docs/thresholds.md):
     z Gauss >= 3 gần như bất khả thi với biến bị chặn; phân vị thực nghiệm
     là tiêu chí đúng cho biến bị chặn.
   * FOREIGN_BURST dùng CỔNG ĐUÔI: |net| >= foreign_tail_mult × p99 của
-    phân phối bản ghi ngoại KHÁC 0 (mặc định 3×), dai dẳng N=1. Chuỗi dòng
-    ngoại zero-inflated nên p99 toàn mẫu rất nhỏ; tính phân vị trên phần khác 0
-    mới tách được burst cực đoan khỏi đuôi thường — ngưỡng suy từ phân phối.
+    phân phối bản ghi ngoại KHÁC 0 (cấu hình: 2×, biện giải docs/thresholds.md),
+    dai dẳng N=1. Chuỗi dòng ngoại zero-inflated nên p99 toàn mẫu rất nhỏ;
+    tính phân vị trên phần khác 0 mới tách được burst cực đoan khỏi đuôi
+    thường — ngưỡng suy từ phân phối.
 - Mỗi cảnh báo mang EVIDENCE đầy đủ (giá trị, μ, σ, z, phân vị, n mẫu, thang đo)
   → người dùng bấm vào thấy 'vì sao', đúng yêu cầu diễn giải có trách nhiệm.
 - Phiên warmup đầu tiên chỉ tích lũy baseline, không cảnh báo (công bố).
@@ -235,4 +236,11 @@ def run_alerts(settings: Settings, snaps_all: pd.DataFrame) -> pd.DataFrame:
                 for key, chunk in _keys_of(atype, sym_idx[(ds, sym)]).items():
                     hist[atype].setdefault(key, []).append(chunk)
                     hist_n[atype][key] = hist_n[atype].get(key, 0) + len(chunk)
+    if not alerts:
+        # khung rỗng vẫn mang ĐỦ schema — tầng trên (UI/test) không phải
+        # phòng thủ KeyError khi không có cảnh báo nào.
+        return pd.DataFrame(columns=[
+            "session_date", "symbol", "group", "ts", "type", "direction",
+            "scale", "value", "signed_value", "mu", "sigma", "z", "pct",
+            "bucket", "n_train"])
     return pd.DataFrame(alerts)

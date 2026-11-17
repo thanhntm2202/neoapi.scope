@@ -86,16 +86,27 @@ def view_lhs(ctx: dict) -> None:
         st.warning("Chưa có LHS cho phiên này — chạy `neoscope analyze`.")
         return
     valid = day.dropna(subset=["lhs"])
+    if valid.empty:
+        st.warning("Phiên này chưa có LHS hợp lệ (cần ≥5 bar liên tiếp để dựng cửa sổ trượt 15').")
+        return
     times = sorted(valid["bar_ts"].unique())
     t_sel = st.select_slider("Thời điểm đánh giá (UTC+7)", options=times,
                              value=times[-1], format_func=lambda t: pd.Timestamp(t).strftime("%H:%M"))
     at_t = valid[valid["bar_ts"] == t_sel]
+    if at_t.empty:
+        # Giá trị widget cũ (phiên trước) không còn trong options của phiên mới
+        # → rơi về lát cắt cuối cùng thay vì ném IndexError.
+        t_sel = times[-1]
+        at_t = valid[valid["bar_ts"] == t_sel]
     col1, col2 = st.columns([1.1, 1])
     with col1:
         st.plotly_chart(ch.lhs_ranking(at_t), width="stretch")
     with col2:
-        sym = st.selectbox("Soi cấu phần mã", at_t.sort_values("lhs", ascending=False)["symbol"].tolist())
-        row = at_t[at_t["symbol"] == sym].iloc[0]
+        sym_options = at_t.sort_values("lhs", ascending=False)["symbol"].tolist()
+        sym = st.selectbox("Soi cấu phần mã", sym_options)
+        pick = at_t[at_t["symbol"] == sym]
+        row = (pick if len(pick) else at_t).iloc[0]
+        sym = str(row["symbol"])
         st.metric(f"LHS của {sym} lúc {pd.Timestamp(t_sel).strftime('%H:%M')}", f"{row['lhs']:.1f}/100")
         st.plotly_chart(ch.component_breakdown(row), width="stretch")
     syms = ctx["symbols"]
@@ -256,8 +267,10 @@ def view_execution(ctx: dict) -> None:
                        if inside else
                        f"Thực hiện nằm NGOÀI khoảng dự báo 90% — đuôi rủi ro là có thật; "
                        f"độ phủ tổng thể xem tab Q4 (không phải lúc nào cũng phủ).")
+            preds_all = ctx["results"].get("predictions", pd.DataFrame())
+            n_oos = int(len(preds_all[preds_all["model"] == "full"])) if len(preds_all) else 0
             st.caption("Một lệnh đơn lẻ không chứng minh được mô hình — bằng chứng đầy đủ là "
-                       "1.179 lệnh test ngoài mẫu ở tab Q4. Mô phỏng không phát sinh lệnh thật.")
+                       f"{n_oos:,} lệnh test ngoài mẫu ở tab Q4. Mô phỏng không phát sinh lệnh thật.")
 
 
 # ------------------------------------------------------------------ Q3: alerts

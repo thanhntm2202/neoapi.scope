@@ -1,0 +1,32 @@
+# Bí mật — tuyệt đối không commit
+.env
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+build/
+dist/
+
+# Môi trường / IDE
+.vscode/
+.idea/
+.DS_Store
+
+# Dữ liệu runtime LIVE (chứa dữ liệu thị trường thu theo phiên của người chạy;
+# bộ SYNTHETIC tái lập được bằng seed nên vẫn commit để người chấm xem ngay)
+data/live_status.json
+data/raw/LIVE_*/
+data/curated/LIVE_*/
+
+# Tệp tạm
+*.tmp
+*.log
+nohup.out

@@ -149,9 +149,14 @@ class StockNormalizer:
         if st["last_ts"] is not None:
             if ts < st["last_ts"]:
                 flags.append(QF.OUT_OF_ORDER)
-            elif (ts - st["last_ts"]).total_seconds() > self.stale_gap_s:
+            else:
                 sess = session_of_time(ts.time())
-                if sess in {"LO_AM", "LO_PM"}:
+                prev_sess = session_of_time(st["last_ts"].time())
+                # Khoảng trống CHỈ là bất thường khi nằm TRONG cùng một phiên
+                # liên tục. Nhịp bắc qua nghỉ trưa / ATO→LO là lịch giao dịch,
+                # không phải mất dữ liệu — gắn cờ ở đó sẽ tạo dương tính giả.
+                if (sess in {"LO_AM", "LO_PM"} and prev_sess == sess
+                        and (ts - st["last_ts"]).total_seconds() > self.stale_gap_s):
                     flags.append(QF.STALE_GAP)
         st["last_ts"] = max(ts, st["last_ts"]) if st["last_ts"] else ts
 

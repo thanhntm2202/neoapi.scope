@@ -100,10 +100,13 @@ bars = load_bars(mode, chash)
 bars_lhs = load_result("bars_lhs.parquet", chash)
 indices = load_indices(mode, chash)
 quality, quality_meta = load_quality(mode, chash)
-results = {name: load_result(name, chash) for name in
-           ("metrics.parquet", "metrics_coverage.parquet", "predictions.parquet", "orders.parquet",
-            "fold_params.parquet", "coverage.parquet", "alerts.parquet", "alert_pr.parquet",
-            "lhs_ic.parquet", "lhs_sensitivity.parquet", "obi_direction.parquet", "resilience.parquet")}
+# Khóa của `results` là TÊN LOGIC (không có đuôi .parquet) — đúng như các
+# view tra cứu (`results["alerts"]`, `results["metrics"]`…). Lệch khóa từng
+# khiến mọi tab kiểm chứng/cảnh báo im lặng rơi về DataFrame rỗng.
+RESULT_FILES = ("metrics", "metrics_coverage", "predictions", "orders",
+                "fold_params", "coverage", "alerts", "alert_pr",
+                "lhs_ic", "lhs_sensitivity", "obi_direction", "resilience")
+results = {name: load_result(f"{name}.parquet", chash) for name in RESULT_FILES}
 ctx = {"settings": s, "mode": mode, "snaps": snaps, "bars": bars, "bars_lhs": bars_lhs,
        "indices": indices, "quality": quality, "quality_meta": quality_meta,
        "summary": summary, "results": results, "session": session,

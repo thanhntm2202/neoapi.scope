@@ -16,6 +16,10 @@ src/neoscope/analytics/calibration.py
 src/neoscope/analytics/lhs.py
 src/neoscope/analytics/validation.py
 src/neoscope/app/__init__.py
+src/neoscope/app/charts.py
+src/neoscope/app/data.py
+src/neoscope/app/main.py
+src/neoscope/app/views.py
 src/neoscope/data/__init__.py
 src/neoscope/data/normalize.py
 src/neoscope/data/pipeline.py
@@ -34,3 +38,8 @@ src/neoscope/simulator/__init__.py
 src/neoscope/simulator/matching.py
 src/neoscope/synth/__init__.py
 src/neoscope/synth/generator.py
+tests/test_execution.py
+tests/test_liquidity.py
+tests/test_microstructure.py
+tests/test_normalize_traps.py
+tests/test_store_and_bars.py
