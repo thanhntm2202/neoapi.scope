@@ -11,6 +11,13 @@ Xử lý mọi "bẫy" đã xác nhận trong docs chính thức:
 Thời điểm sự kiện: payload stockInfo KHÔNG có trường thời gian riêng,
 nên dùng arrival_ts làm xấp xỉ thời điểm sự kiện (công bố trong từ điển
 dữ liệu — sai số cỡ độ trễ mạng, chấp nhận được ở tần suất 5s).
+
+Bộ đếm lũy kế được hiệu trên TRẠNG THÁI ĐƠN ĐIỆU (max đã thấy) sau khi
+sắp xếp bản ghi theo arrival_ts: thông điệp mang bộ đếm cũ hơn state là
+bằng chứng ĐẾN MUỘN (cờ LATE_ARRIVAL, delta NaN, không lùi state) —
+tổng khối lượng được bảo toàn, không bịa nhịp âm. Reset thật (bộ đếm
+về 0) tách riêng bằng cờ COUNTER_RESET. Thông điệp sai thứ tự arrival
+được gắn cờ OUT_OF_ORDER ở tầng RAW trước khi sắp xếp.
 """
 from __future__ import annotations
 
@@ -82,15 +89,36 @@ class StockNormalizer:
         )
 
     @staticmethod
-    def _delta(cur: float | None, prev: float | None, flags: list[str]) -> float | None:
+    def _delta(cur: float | None, state: float | None, flags: list[str]) -> tuple[float | None, bool]:
+        """Delta trên trạng thái LŨY KẾ ĐƠN ĐIỆU (state = max đã thấy).
+
+        Bộ đếm của sàn không giảm trong phiên. Nếu cur < state thì thông
+        điệp này mang trạng thái CŨ hơn một bản ghi đã thấy → bằng chứng
+        nó ĐẾN MUỘN so với thứ tự sự kiện (arrival_ts không phải thời điểm
+        sự kiện thật). Xử lý trung thực: gắn cờ LATE_ARRIVAL, delta = NaN
+        (không bịa nhịp âm/không), KHÔNG lùi state — phần khối lượng của
+        thông điệp muộn được hấp thụ vào delta kế tiếp (bảo toàn tổng).
+        cur == 0 với state > 0 là chữ ký RESET thật (phiên mới/lỗi nguồn).
+        Trả về (delta, is_reset).
+        """
+        if cur is None or state is None:
+            return None, False  # thiếu/nhịp đầu: không suy được delta
+        if cur < state:
+            if cur == 0:
+                flags.append(QF.COUNTER_RESET)
+                return None, True
+            flags.append(QF.LATE_ARRIVAL)
+            return None, False
+        return cur - state, False
+
+    @staticmethod
+    def _advance(state: float | None, cur: float | None, is_reset: bool) -> float | None:
+        """Cập nhật state đơn điệu; reset thật đưa state về giá trị mới."""
         if cur is None:
-            return None
-        if prev is None:
-            return None  # nhịp đầu tiên: không suy được delta
-        if cur < prev:
-            flags.append(QF.COUNTER_RESET)
-            return None
-        return cur - prev
+            return state
+        if state is None or is_reset:
+            return cur
+        return max(state, cur)
 
     def normalize(self, rec: dict[str, Any]) -> dict[str, Any] | None:
         """Trả về dòng curated, hoặc None nếu là bản ghi lặp (bị loại)."""
@@ -114,12 +142,21 @@ class StockNormalizer:
         st["hashes"].append(h)
 
         # --- sai thứ tự / khoảng trống ---
+        # Cờ sai thứ tự được gắn ở tầng RAW (pipeline) trước khi sắp xếp theo
+        # thời điểm sự kiện; ở đây chỉ đọc lại bằng chứng, không suy diễn lại.
+        if rec.get("_out_of_order"):
+            flags.append(QF.OUT_OF_ORDER)
         if st["last_ts"] is not None:
             if ts < st["last_ts"]:
                 flags.append(QF.OUT_OF_ORDER)
-            elif (ts - st["last_ts"]).total_seconds() > self.stale_gap_s:
+            else:
                 sess = session_of_time(ts.time())
-                if sess in {"LO_AM", "LO_PM"}:
+                prev_sess = session_of_time(st["last_ts"].time())
+                # Khoảng trống CHỈ là bất thường khi nằm TRONG cùng một phiên
+                # liên tục. Nhịp bắc qua nghỉ trưa / ATO→LO là lịch giao dịch,
+                # không phải mất dữ liệu — gắn cờ ở đó sẽ tạo dương tính giả.
+                if (sess in {"LO_AM", "LO_PM"} and prev_sess == sess
+                        and (ts - st["last_ts"]).total_seconds() > self.stale_gap_s):
                     flags.append(QF.STALE_GAP)
         st["last_ts"] = max(ts, st["last_ts"]) if st["last_ts"] else ts
 
@@ -160,16 +197,14 @@ class StockNormalizer:
             val, fl = parse_num(payload.get(src))
             row[dst] = val
 
-        # --- bộ đếm lũy kế → delta ---
+        # --- bộ đếm lũy kế → delta (state đơn điệu, chống thông điệp muộn) ---
         cum_vol, f1 = parse_num(payload.get("totalTradingVolume"))
         cum_val, f2 = parse_num(payload.get("totalTradingValue"))
         row["cum_vol"], row["cum_val"] = cum_vol, cum_val
-        row["d_vol"] = self._delta(cum_vol, st["cum_vol"], flags)
-        row["d_val"] = self._delta(cum_val, st["cum_val"], flags)
-        if cum_vol is not None:
-            st["cum_vol"] = cum_vol
-        if cum_val is not None:
-            st["cum_val"] = cum_val
+        row["d_vol"], reset_v = self._delta(cum_vol, st["cum_vol"], flags)
+        row["d_val"], reset_a = self._delta(cum_val, st["cum_val"], flags)
+        st["cum_vol"] = self._advance(st["cum_vol"], cum_vol, reset_v)
+        st["cum_val"] = self._advance(st["cum_val"], cum_val, reset_a)
 
         # --- tổng cung/cầu hiển thị (có thể null trong payload thật) ---
         tbq, ftb = parse_num(payload.get("totalBidQTTY"))
@@ -185,12 +220,10 @@ class StockNormalizer:
         fsv, _ = parse_num(payload.get("foreignSellValue"))
         fnv, _ = parse_num(payload.get("foreignNetValue"))
         row["f_buy_val"], row["f_sell_val"], row["f_net_val"] = fbv, fsv, fnv
-        row["d_f_buy_val"] = self._delta(fbv, st["f_buy_val"], flags)
-        row["d_f_sell_val"] = self._delta(fsv, st["f_sell_val"], flags)
-        if fbv is not None:
-            st["f_buy_val"] = fbv
-        if fsv is not None:
-            st["f_sell_val"] = fsv
+        row["d_f_buy_val"], reset_fb = self._delta(fbv, st["f_buy_val"], flags)
+        row["d_f_sell_val"], reset_fs = self._delta(fsv, st["f_sell_val"], flags)
+        st["f_buy_val"] = self._advance(st["f_buy_val"], fbv, reset_fb)
+        st["f_sell_val"] = self._advance(st["f_sell_val"], fsv, reset_fs)
         fbvol, _ = parse_num(payload.get("foreignBuyVolume"))
         fsvol, _ = parse_num(payload.get("foreignSellVolume"))
         row["f_buy_vol"], row["f_sell_vol"] = fbvol, fsvol

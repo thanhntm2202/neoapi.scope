@@ -147,11 +147,17 @@ def expected_is_bps(
     e_unf = side * mu * horizon_s
     e = w_vis * ladder.cost_vis_bps + w_res * e_res + w_unf * e_unf
 
-    sig = sigma_bps_per_s if np.isfinite(sigma_bps_per_s) and sigma_bps_per_s > 0 else 0.0
+    sig_ok = bool(np.isfinite(sigma_bps_per_s) and sigma_bps_per_s > 0)
+    sig = float(sigma_bps_per_s) if sig_ok else 0.0
     tau_eff = (w_res ** 2) * tau / 3.0 + (w_unf ** 2) * horizon_s
     sigma = y_risk * sig * math.sqrt(max(tau_eff, 0.0))
     if not np.isfinite(sigma):
         sigma = 0.0
+        sig_ok = False
+    # TRUNG THỰC: thiếu σ mà vẫn có phơi nhiễm thời gian → KHÔNG được trình
+    # bày khoảng dự báo bề rộng 0 như thể chắc chắn. Gắn cờ để tầng trên
+    # (UI/kiểm chứng) cảnh báo và đếm, thay vì im lặng coi như không rủi ro.
+    if not sig_ok and tau_eff > 0:
         flags.append("NO_VOL_ESTIMATE")
 
     return CostEstimate(

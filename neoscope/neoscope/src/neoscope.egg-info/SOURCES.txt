@@ -1,3 +1,4 @@
+README.md
 pyproject.toml
 src/neoscope/__init__.py
 src/neoscope/cli.py
@@ -15,6 +16,10 @@ src/neoscope/analytics/calibration.py
 src/neoscope/analytics/lhs.py
 src/neoscope/analytics/validation.py
 src/neoscope/app/__init__.py
+src/neoscope/app/charts.py
+src/neoscope/app/data.py
+src/neoscope/app/main.py
+src/neoscope/app/views.py
 src/neoscope/data/__init__.py
 src/neoscope/data/normalize.py
 src/neoscope/data/pipeline.py

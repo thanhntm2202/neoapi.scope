@@ -199,7 +199,10 @@ def cmd_app(args) -> None:
     app_path = Path(__file__).parent / "app" / "main.py"
     cmd = [sys.executable, "-m", "streamlit", "run", str(app_path),
            "--server.address", "0.0.0.0", "--server.port", str(args.port),
-           "--server.headless", "true", "--browser.gatherUsageStats", "false"]
+           "--server.headless", "true", "--browser.gatherUsageStats", "false",
+           # Cho phép chạy sau reverse-proxy/sandbox preview (không ảnh hưởng
+           # bảo mật dữ liệu: app chỉ ĐỌC dữ liệu thị trường, không nhận lệnh).
+           "--server.enableCORS", "false", "--server.enableXsrfProtection", "false"]
     subprocess.run(cmd, cwd=REPO_ROOT, check=False)
 
 
