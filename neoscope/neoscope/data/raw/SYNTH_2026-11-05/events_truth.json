@@ -1,0 +1,105 @@
+{
+  "synthetic": true,
+  "events": [
+    {
+      "type": "DEPTH_EVAPORATION",
+      "symbol": "FPT",
+      "start_ts": "2026-11-05T10:05:15+07:00",
+      "end_ts": "2026-11-05T10:11:20+07:00",
+      "start_step": 603,
+      "end_step": 676,
+      "direction": 1,
+      "synthetic": true
+    },
+    {
+      "type": "DEPTH_EVAPORATION",
+      "symbol": "PDR",
+      "start_ts": "2026-11-05T10:48:00+07:00",
+      "end_ts": "2026-11-05T10:53:45+07:00",
+      "start_step": 1116,
+      "end_step": 1185,
+      "direction": 1,
+      "synthetic": true
+    },
+    {
+      "type": "TRADE_BURST",
+      "symbol": "NLG",
+      "start_ts": "2026-11-05T09:32:35+07:00",
+      "end_ts": "2026-11-05T09:35:15+07:00",
+      "start_step": 211,
+      "end_step": 243,
+      "direction": 1,
+      "synthetic": true
+    },
+    {
+      "type": "TRADE_BURST",
+      "symbol": "DIG",
+      "start_ts": "2026-11-05T10:47:15+07:00",
+      "end_ts": "2026-11-05T10:49:55+07:00",
+      "start_step": 1107,
+      "end_step": 1139,
+      "direction": -1,
+      "synthetic": true
+    },
+    {
+      "type": "FLASH_MOVE",
+      "symbol": "PDR",
+      "start_ts": "2026-11-05T13:26:10+07:00",
+      "end_ts": "2026-11-05T13:27:05+07:00",
+      "start_step": 1934,
+      "end_step": 1945,
+      "direction": 1,
+      "synthetic": true
+    },
+    {
+      "type": "FOREIGN_BURST",
+      "symbol": "FPT",
+      "start_ts": "2026-11-05T10:40:25+07:00",
+      "end_ts": "2026-11-05T10:41:10+07:00",
+      "start_step": 1025,
+      "end_step": 1034,
+      "direction": 1,
+      "synthetic": true
+    },
+    {
+      "type": "FOREIGN_BURST",
+      "symbol": "DIG",
+      "start_ts": "2026-11-05T10:37:55+07:00",
+      "end_ts": "2026-11-05T10:38:25+07:00",
+      "start_step": 995,
+      "end_step": 1001,
+      "direction": 1,
+      "synthetic": true
+    },
+    {
+      "type": "OBI_SHOCK",
+      "symbol": "FPT",
+      "start_ts": "2026-11-05T11:17:50+07:00",
+      "end_ts": "2026-11-05T11:20:20+07:00",
+      "start_step": 1474,
+      "end_step": 1504,
+      "direction": 1,
+      "synthetic": true
+    },
+    {
+      "type": "OBI_SHOCK",
+      "symbol": "DIG",
+      "start_ts": "2026-11-05T14:02:00+07:00",
+      "end_ts": "2026-11-05T14:04:30+07:00",
+      "start_step": 2364,
+      "end_step": 2394,
+      "direction": 1,
+      "synthetic": true
+    }
+  ],
+  "gaps": {
+    "HPG": [
+      1990,
+      1998
+    ],
+    "SSI": [
+      488,
+      494
+    ]
+  }
+}

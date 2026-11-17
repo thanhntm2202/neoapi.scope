@@ -1,0 +1,105 @@
+{
+  "synthetic": true,
+  "events": [
+    {
+      "type": "DEPTH_EVAPORATION",
+      "symbol": "VCB",
+      "start_ts": "2026-11-06T10:39:35+07:00",
+      "end_ts": "2026-11-06T10:44:00+07:00",
+      "start_step": 1015,
+      "end_step": 1068,
+      "direction": 1,
+      "synthetic": true
+    },
+    {
+      "type": "DEPTH_EVAPORATION",
+      "symbol": "HCM",
+      "start_ts": "2026-11-06T13:05:05+07:00",
+      "end_ts": "2026-11-06T13:10:50+07:00",
+      "start_step": 1681,
+      "end_step": 1750,
+      "direction": 1,
+      "synthetic": true
+    },
+    {
+      "type": "TRADE_BURST",
+      "symbol": "NLG",
+      "start_ts": "2026-11-06T13:35:35+07:00",
+      "end_ts": "2026-11-06T13:38:05+07:00",
+      "start_step": 2047,
+      "end_step": 2077,
+      "direction": -1,
+      "synthetic": true
+    },
+    {
+      "type": "TRADE_BURST",
+      "symbol": "FPT",
+      "start_ts": "2026-11-06T11:05:45+07:00",
+      "end_ts": "2026-11-06T11:07:00+07:00",
+      "start_step": 1329,
+      "end_step": 1344,
+      "direction": 1,
+      "synthetic": true
+    },
+    {
+      "type": "FLASH_MOVE",
+      "symbol": "NLG",
+      "start_ts": "2026-11-06T13:31:20+07:00",
+      "end_ts": "2026-11-06T13:32:05+07:00",
+      "start_step": 1996,
+      "end_step": 2005,
+      "direction": -1,
+      "synthetic": true
+    },
+    {
+      "type": "FOREIGN_BURST",
+      "symbol": "FPT",
+      "start_ts": "2026-11-06T13:33:45+07:00",
+      "end_ts": "2026-11-06T13:34:25+07:00",
+      "start_step": 2025,
+      "end_step": 2033,
+      "direction": -1,
+      "synthetic": true
+    },
+    {
+      "type": "FOREIGN_BURST",
+      "symbol": "FPT",
+      "start_ts": "2026-11-06T13:14:35+07:00",
+      "end_ts": "2026-11-06T13:15:45+07:00",
+      "start_step": 1795,
+      "end_step": 1809,
+      "direction": -1,
+      "synthetic": true
+    },
+    {
+      "type": "OBI_SHOCK",
+      "symbol": "PDR",
+      "start_ts": "2026-11-06T09:38:35+07:00",
+      "end_ts": "2026-11-06T09:39:35+07:00",
+      "start_step": 283,
+      "end_step": 295,
+      "direction": 1,
+      "synthetic": true
+    },
+    {
+      "type": "OBI_SHOCK",
+      "symbol": "FPT",
+      "start_ts": "2026-11-06T14:19:55+07:00",
+      "end_ts": "2026-11-06T14:21:05+07:00",
+      "start_step": 2579,
+      "end_step": 2593,
+      "direction": -1,
+      "synthetic": true
+    }
+  ],
+  "gaps": {
+    "PDR": [
+      1770,
+      1781
+    ],
+    "NLG": [
+      2495,
+      2502
+    ]
+  }
+}

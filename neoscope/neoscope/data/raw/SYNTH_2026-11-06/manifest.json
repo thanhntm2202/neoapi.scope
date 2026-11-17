@@ -1,0 +1,22 @@
+{
+  "mode": "SYNTHETIC",
+  "synthetic": true,
+  "counts": {
+    "stockInfo": 21698,
+    "marketSession": 4,
+    "marketInfo": 1800,
+    "marketVolume": 1800
+  },
+  "total_messages": 25302,
+  "closed_at": "2026-11-17T13:54:06.744939+07:00",
+  "sha256": {
+    "marketInfo.jsonl.gz": "56a8ad7674ed686fdaa59d3ce71ee0651bcf3da244bb91c682fd4129c8d3fe31",
+    "marketSession.jsonl.gz": "ad000e24b95a5e9dc89d6fcac7f635390b88a8229accc7b92389da89ef0221e1",
+    "marketVolume.jsonl.gz": "71ff0c4aa8b938258a7a980c1e30efd044c6dd73edbf16bbd02cdc981c31c6a5",
+    "stockInfo.jsonl.gz": "743d0f89219e0c30afe3a41e17dab04901bb1acd1c7228058827f55aed7c6dc1"
+  },
+  "seed": 20261420,
+  "session_date": "2026-11-06",
+  "generator_version": "1.0.0",
+  "config_hash": "efd476bb51de0620"
+}
