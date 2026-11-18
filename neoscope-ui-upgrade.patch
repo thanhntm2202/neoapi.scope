@@ -1,0 +1,776 @@
+From c976905a4ea8b646989c979f3ef325575259dcda Mon Sep 17 00:00:00 2001
+From: neoscope-upgrade <dev@neoscope.local>
+Date: Wed, 18 Nov 2026 11:59:13 +0800
+Subject: [PATCH] =?UTF-8?q?feat(ui):=20nang=20cap=20toan=20dien=20giao=20d?=
+ =?UTF-8?q?ien=20=E2=80=94=20status=20strip=20gon,=20KPI=20delta=20chip,?=
+ =?UTF-8?q?=20LHS=20gauge,=20b=C4=83ng=20thanh=20kho=E1=BA=A3n=20intraday,?=
+ =?UTF-8?q?=20alert=20timeline,=20LHS=20sparkline=20+=20export=20CSV,=20fo?=
+ =?UTF-8?q?oter=20phuong=20phap?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ neoscope/README.md                  |   2 +-
+ neoscope/src/neoscope/app/charts.py |  89 +++++++++++++++
+ neoscope/src/neoscope/app/main.py   | 103 +++++++++++-------
+ neoscope/src/neoscope/app/theme.py  | 145 ++++++++++++++++++++-----
+ neoscope/src/neoscope/app/views.py  | 162 +++++++++++++++++++++++-----
+ 5 files changed, 409 insertions(+), 92 deletions(-)
+
+diff --git a/neoscope/README.md b/neoscope/README.md
+index 14ce434..c04a0ac 100644
+--- a/neoscope/README.md
++++ b/neoscope/README.md
+@@ -77,7 +77,7 @@ Reproducible synthetic stream ─┘          → microstructure indicators →
+                                               → Streamlit research dashboard
+ ```
+ 
+-The dashboard is organized into seven pages under **Analysis** and **Research administration**, presented with a unified dark design system (`src/neoscope/app/theme.py`): a hero banner with provider/mode/timezone status pills, KPI cards, an Alert Pulse feed on the overview, and a two-symbol **Liquidity Radar** (five LHS components) on the liquidity page. The overview starts with session/watchlist KPIs (spread, displayed depth, LHS and alerts), paired market-breadth/liquidity-rank charts, and the selected-symbol table. A shared session/watchlist filter, provider/mode state, last event timestamp, and refresh control remain visible across the workflow. The other pages cover LHS composition, paper execution, alert evidence, out-of-sample validation, data quality, and methods/limits. Empty, stale, and unavailable-data states explain what the user can check next. The paper matching engine is isolated from all provider clients.
++The dashboard is organized into seven pages under **Analysis** and **Research administration**, presented with a unified dark design system (`src/neoscope/app/theme.py`). The **overview** opens with a full hero banner and status pills (provider/mode/session/freshness/timezone), KPI cards with session-over-session delta chips, an Alert Pulse feed, paired market-breadth/liquidity-rank charts, a per-symbol **intraday liquidity tape** (mid, last price and displayed depth both sides), and a watchlist table with **LHS sparklines** plus CSV export. The other pages open with a compact one-line status strip so analysis content starts immediately: **Liquidity** adds an LHS gauge, the two-symbol **Liquidity Radar** (five LHS components), an intraday LHS distribution by liquidity group and weight-sensitivity robustness; **Execution** shows the cost model, book ladder, IS waterfall, benchmarks and the paper-simulator chamber; **Alerts** adds KPI cards, an **alert timeline** (time × type, sized/colored by priority), full evidence drill-down, ground-truth precision/recall and CSV export; **Validation** presents walk-forward MAE, session-cluster bootstrap CIs, PI coverage, LHS information coefficient and honest limitations. A shared session/watchlist filter, provider/mode state, last event timestamp, and refresh control remain visible across the workflow, and every page closes with a consistent methodology footer. KPI values use each symbol's **last valid** observation (null book states at ATO/ATC closes are skipped, never shown as "—"). Empty, stale, and unavailable-data states explain what the user can check next. The paper matching engine is isolated from all provider clients.
+ 
+ ## Reproducibility and safety
+ 
+diff --git a/neoscope/src/neoscope/app/charts.py b/neoscope/src/neoscope/app/charts.py
+index f71c85b..4a007d1 100644
+--- a/neoscope/src/neoscope/app/charts.py
++++ b/neoscope/src/neoscope/app/charts.py
+@@ -320,3 +320,92 @@ def alert_pr_bar(pr: pd.DataFrame) -> go.Figure:
+     fig.update_yaxes(range=[0, 115], title="%")
+     fig.update_layout(barmode="group")
+     return _base(fig, 330, "Đối chiếu cảnh báo với sự kiện ground-truth (chỉ có ở chế độ SYNTHETIC)")
++
++
++# ------------------------------------------------------------------ bổ sung nâng cấp UI
++def lhs_gauge(value: float, symbol: str, group: str) -> go.Figure:
++    """Đồng hồ LHS của một mã — đọc nhanh mức sức khỏe thanh khoản tại một thởi điểm."""
++    color = GROUP_COLORS.get(group, C_ACCENT)
++    fig = go.Figure(go.Indicator(
++        mode="gauge+number", value=value,
++        number=dict(font=dict(size=30, color="#f1f6ff"), suffix="/100"),
++        title=dict(text=f"LHS · {symbol}", font=dict(size=13, color=C_TEXT)),
++        gauge=dict(
++            axis=dict(range=[0, 100], tickfont=dict(size=10, color=C_MUTED), tickcolor=C_GRID),
++            bar=dict(color=color, thickness=0.28),
++            bgcolor="rgba(17,26,46,0.5)",
++            bordercolor=C_GRID, borderwidth=1,
++            steps=[
++                dict(range=[0, 33], color="rgba(248,113,113,0.10)"),
++                dict(range=[33, 66], color="rgba(251,191,36,0.10)"),
++                dict(range=[66, 100], color="rgba(52,211,153,0.10)"),
++            ],
++        )))
++    fig.update_layout(margin=dict(l=24, r=24, t=42, b=8))
++    return _base(fig, 235, None)
++
++
++def tape(snaps_day_sym: pd.DataFrame) -> go.Figure:
++    """Băng giao dịch nội phiên: mid + độ sâu hai phía + khối lượng từng nhịp.
++
++    Cho ngưởi dùng 'thấy' toàn bộ hành trình thanh khoản của mã trong phiên —
++    đây là lớp trực quan cấp cao còn thiếu của dashboard.
++    """
++    g = snaps_day_sym.sort_values("ts")
++    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.62, 0.38],
++                        vertical_spacing=0.06,
++                        subplot_titles=("Mid & giá khớp", "Độ sâu hiển thị hai phía (VND)"))
++    fig.add_trace(go.Scatter(x=g["ts"], y=g["mid"], name="Mid", line=dict(color=C_ACCENT, width=1.6)), row=1, col=1)
++    lp = g["last_price"].dropna()
++    fig.add_trace(go.Scatter(x=g.loc[lp.index, "ts"], y=lp, name="Giá khớp", mode="markers",
++                             marker=dict(size=3, color="#94a3b8", opacity=0.7)), row=1, col=1)
++    for col, name, color, fill in (("depth_bid_vnd", "Depth bid", C_LARGE, "rgba(56,189,248,0.18)"),
++                                   ("depth_ask_vnd", "Depth ask", C_THIN, "rgba(251,191,36,0.14)")):
++        if col in g:
++            fig.add_trace(go.Scatter(x=g["ts"], y=g[col], name=name, line=dict(color=color, width=1.2),
++                                     fillcolor=fill, fill="tozeroy"), row=2, col=1)
++    fig.update_xaxes(title="Giờ (UTC+7)", row=2, col=1)
++    sym = g["symbol"].iloc[0] if len(g) else "—"
++    fig = _base(fig, 420, f"Băng thanh khoản nội phiên · {sym}")
++    fig.update_layout(legend=dict(orientation="h", yanchor="top", y=-0.22, x=0))
++    return fig
++
++
++def alert_timeline(alerts: pd.DataFrame) -> go.Figure:
++    """Timeline cảnh báo: trục giờ × loại cảnh báo, kích thước và màu theo mức ưu tiên.
++
++    Cho thấy phân bố thờI điểm bất thường trong phiên — nhận diện cụm sự kiện
++    (vd nhiều mã cùng sốc vào một khung giờ) mà bảng không thể hiện được.
++    """
++    d = alerts.copy()
++    prio_color = {"P1": C_BAD, "P2": "#fbbf24", "P3": C_LARGE}
++    d["color"] = d.get("priority", "P3").map(lambda p: prio_color.get(p, C_LARGE))
++    d["size"] = d.get("priority", "P3").map({"P1": 13, "P2": 10, "P3": 8}).fillna(8)
++    fig = go.Figure()
++    for sym, g in d.groupby("symbol"):
++        fig.add_trace(go.Scatter(
++            x=g["ts"], y=g["type"], mode="markers", name=sym,
++            marker=dict(size=g["size"], color=g["color"], opacity=0.85, line=dict(width=1, color="#0a0f1c")),
++            hovertemplate=(f"{sym} · %{{y}}<br>%{{x|%H:%M:%S}} · z=%{{customdata:.2f}}<extra></extra>"),
++            customdata=g["z"] if "z" in g else None))
++    fig.update_xaxes(title="Giờ (UTC+7)")
++    fig.update_yaxes(title=None, automargin=True)
++    fig = _base(fig, 340, "Timeline cảnh báo trong các phiên đã chọn — cụm sự kiện nhìn một lần thấy ngay")
++    # legend nhiều mã: đặt dưới cùng để không đè tiêu đề
++    fig.update_layout(legend=dict(orientation="h", yanchor="top", y=-0.28, x=0))
++    return fig
++
++
++def lhs_dist(day_lhs: pd.DataFrame) -> go.Figure:
++    """Phân phối LHS trong phiên theo nhóm — độ tách biệt giữa nhóm thanh khoản cao và mỏng."""
++    fig = go.Figure()
++    for grp, color in GROUP_COLORS.items():
++        g = day_lhs[(day_lhs["group"] == grp) & day_lhs["lhs"].notna()]
++        if len(g):
++            fig.add_trace(go.Histogram(x=g["lhs"], name=f"Nhóm {grp} (n={len(g):,} bar)",
++                                       marker_color=color, opacity=0.6, nbinsx=30,
++                                       hovertemplate="LHS %{x:.0f}: %{y} bar<extra></extra>"))
++    fig.update_layout(barmode="overlay")
++    fig.update_xaxes(title="LHS (0–100)", range=[0, 100])
++    fig.update_yaxes(title="Số bar 1 phút")
++    return _base(fig, 300, "Phân phối LHS nội phiên theo nhóm thanh khoản")
+diff --git a/neoscope/src/neoscope/app/main.py b/neoscope/src/neoscope/app/main.py
+index d0dd3e9..9bc761c 100644
+--- a/neoscope/src/neoscope/app/main.py
++++ b/neoscope/src/neoscope/app/main.py
+@@ -28,10 +28,20 @@ from neoscope.app.data import (freshness, load_bars, load_indices, load_quality,
+ from neoscope.app.views import (view_alerts, view_data, view_execution, view_lhs,
+                                 view_method, view_overview, view_validation)
+ 
+-st.set_page_config(page_title="NeoScope | Phân tích thanh khoản", page_icon=":material/analytics:",
+-                   layout="wide", initial_sidebar_state="expanded")
++st.set_page_config(page_title="NeoScope | Phòng phân tích thanh khoản & vi cấu trúc",
++                   page_icon=":material/analytics:", layout="wide", initial_sidebar_state="expanded")
+ theme.inject()
+ 
++PAGE_TITLES = {
++    "overview": "Tổng quan thị trường",
++    "liquidity": "Thanh khoản · so sánh cấu phần LHS",
++    "execution-cost": "Mô phỏng chi phí thực thi",
++    "alerts": "Cảnh báo bất thường",
++    "validation": "Kiểm chứng ngoài mẫu",
++    "data-quality": "Dữ liệu & chất lượng",
++    "methodology": "Phương pháp & giới hạn",
++}
++
+ LOAD_WARNINGS: list[str] = []
+ 
+ 
+@@ -63,33 +73,80 @@ sessions = sessions_of(snaps)
+ 
+ ctx: dict = {}
+ 
++# ---- Header chung: hero đầy đủ chỉ ở trang Tổng quan; các trang chuyên sâu
++# dùng status strip gọn một hàng để nội dung phân tích bắt đầu ngay đầu trang.
++_HEADER: dict = {}
++
++
++def _build_pills() -> list[tuple[str, str, str]]:
++    items: list[tuple[str, str, str]] = []
++    if mode == "SYNTHETIC":
++        items.append(("DỮ LIỆU MÔ PHỎNG · SYNTHETIC", "amber",
++                      "Bộ sinh dữ liệu có seed; không phải thị trường thật"))
++    else:
++        ws_state = str(_HEADER["live_status"].get("state", "not started")).lower()
++        items.append((f"WebSocket · {ws_state}",
++                      {"connected": "green", "stale": "amber", "failed": "red"}.get(ws_state, "gray"),
++                      "Trạng thái luồng dữ liệu thời gian thực của recorder"))
++    items.append((f"Nguồn · {s.provider}", "blue",
++                  "SSI FastConnect API v3 là nguồn cốt lõi; NEO là dự phòng"))
++    items.append((f"Phiên · {session}", "gray", "Phiên giao dịch đang phân tích"))
++    items.append((f"Cập nhật · {freshness(snaps)}", "gray", "Thởi điểm sự kiện gần nhất trong dữ liệu (UTC+7)"))
++    return items
++
++
++def _render_header(url_path: str) -> None:
++    if url_path == "overview":
++        theme.hero(
++            brand=f"NEOSCOPE · NGUỒN {s.provider} FASTCONNECT API v3",
++            title="Phòng phân tích thanh khoản &amp; vi cấu trúc thị trường Việt Nam",
++            subtitle="Công cụ nghiên cứu cho nhà đầu tư, môi giới và chuyên viên phân tích: đo sức khỏe thanh khoản "
++                     "(LHS), ước tính chi phí thực thi lệnh giả định theo Implementation Shortfall, và truy nguyên "
++                     "cảnh báo bất thường bằng ngưỡng thống kê. Dữ liệu SSI FastConnect API v3 — chỉ đọc, "
++                     "không đặt lệnh thật, không phải khuyến nghị đầu tư.")
++        theme.pills(_build_pills())
++        st.warning("**DỮ LIỆU MÔ PHỎNG** · Kết quả chỉ kiểm chứng cơ chế trên bộ sinh synthetic, "
++                   "không đại diện cho thị trường thật. Seed và phiên bản generator có trong manifest.",
++                   icon=":material/science:")
++    else:
++        theme.status_strip(
++            brand="NEOSCOPE",
++            title=PAGE_TITLES.get(url_path, ""),
++            pills=_build_pills())
++
++
++def _wrap(url_path: str, view) -> None:
++    _render_header(url_path)
++    view(ctx)
++    theme.footer(s.provider, mode, chash)
++
+ 
+ def _overview_page() -> None:
+-    view_overview(ctx)
++    _wrap("overview", view_overview)
+ 
+ 
+ def _liquidity_page() -> None:
+-    view_lhs(ctx)
++    _wrap("liquidity", view_lhs)
+ 
+ 
+ def _execution_page() -> None:
+-    view_execution(ctx)
++    _wrap("execution-cost", view_execution)
+ 
+ 
+ def _alerts_page() -> None:
+-    view_alerts(ctx)
++    _wrap("alerts", view_alerts)
+ 
+ 
+ def _validation_page() -> None:
+-    view_validation(ctx)
++    _wrap("validation", view_validation)
+ 
+ 
+ def _data_page() -> None:
+-    view_data(ctx)
++    _wrap("data-quality", view_data)
+ 
+ 
+ def _method_page() -> None:
+-    view_method(ctx)
++    _wrap("methodology", view_method)
+ 
+ 
+ page = st.navigation(
+@@ -155,33 +212,7 @@ with st.sidebar:
+         st.cache_data.clear()
+         st.rerun()
+ 
+-theme.hero(
+-    brand=f"NEOSCOPE · NGUỒN {s.provider} FASTCONNECT API v3",
+-    title="Phòng phân tích thanh khoản &amp; vi cấu trúc thị trường Việt Nam",
+-    subtitle="Công cụ nghiên cứu cho nhà đầu tư, môi giới và chuyên viên phân tích: đo sức khỏe thanh khoản "
+-             "(LHS), ước tính chi phí thực thi lệnh giả định theo Implementation Shortfall, và truy nguyên "
+-             "cảnh báo bất thường bằng ngưỡng thống kê. Dữ liệu SSI FastConnect API v3 — chỉ đọc, "
+-             "không đặt lệnh thật, không phải khuyến nghị đầu tư.")
+-_pills: list[tuple[str, str, str]] = []
+-if mode == "SYNTHETIC":
+-    _pills.append(("DỮ LIỆU MÔ PHỎNG · SYNTHETIC", "amber", "Bộ sinh dữ liệu có seed; không phải thị trường thật"))
+-else:
+-    ws_state = str(live_status.get("state", "not started")).lower()
+-    _pills.append((f"WebSocket · {ws_state}",
+-                   {"connected": "green", "stale": "amber", "failed": "red"}.get(ws_state, "gray"),
+-                   "Trạng thái luồng dữ liệu thời gian thực của recorder"))
+-_pills.append((f"Nguồn · {s.provider}", "blue", "SSI FastConnect API v3 là nguồn cốt lõi; NEO là dự phòng"))
+-_pills.append((f"Phiên · {session}", "gray", "Phiên giao dịch đang phân tích"))
+-_pills.append((f"Cập nhật · {freshness(snaps)} · UTC+7", "gray", "Thời điểm sự kiện gần nhất trong dữ liệu"))
+-_pills.append(("Múi giờ · Asia/Ho_Chi_Minh", "gray", "Mọi dấu thời gian chuẩn hóa theo UTC+7"))
+-theme.pills(_pills)
+-if mode == "SYNTHETIC":
+-    st.warning("**DỮ LIỆU MÔ PHỎNG** · Kết quả chỉ kiểm chứng cơ chế trên bộ sinh synthetic, "
+-               "không đại diện cho thị trường thật. Seed và phiên bản generator có trong manifest.",
+-               icon=":material/science:")
+-else:
+-    st.info(f"**DỮ LIỆU LIVE · {s.provider}** · Dữ liệu và kết quả được tách theo nguồn. "
+-            "Ứng dụng không gọi endpoint đặt lệnh.", icon=":material/candlestick_chart:")
++_HEADER["live_status"] = live_status
+ 
+ bars = _load_optional("bars", load_bars, data_mode, chash, default=pd.DataFrame())
+ bars_lhs = _load_optional("LHS", load_result, "bars_lhs.parquet", chash, default=pd.DataFrame())
+diff --git a/neoscope/src/neoscope/app/theme.py b/neoscope/src/neoscope/app/theme.py
+index 61585a4..7fc4279 100644
+--- a/neoscope/src/neoscope/app/theme.py
++++ b/neoscope/src/neoscope/app/theme.py
+@@ -1,9 +1,10 @@
+-"""Hệ thiết kế NeoScope — theme tối chuẩn fintech quốc tế.
++"""Hệ thiết kế NeoScope — design system tối chuẩn fintech quốc tế.
+ 
+-Một nguồn duy nhất cho CSS tùy biến và các khối HTML (hero, KPI card, badge,
+-alert feed) để mọi trang dùng chung ngôn ngữ thị giác. Mục tiêu: mật độ thông
+-tin cao nhưng phân cấp rõ ràng — đúng chuẩn dashboard chuyên nghiệp (Bloomberg/
+-Refinitiv-style) với nền tảng hiện đại (glassmorphism tinh tế, không lạm dụng).
++Một nguồn duy nhất cho CSS tùy biến và các khối HTML (hero, status strip,
++KPI card, badge, alert feed, footer) để mọi trang dùng chung ngôn ngữ thị
++giác. Nguyên tắc: mật độ thông tin cao nhưng phân cấp rõ ràng; trang Tổng quan
++dùng hero đầy đủ, các trang chuyên sâu dùng status strip gọn một hàng để nội
++dung phân tích bắt đầu ngay dưới đầu trang.
+ """
+ from __future__ import annotations
+ 
+@@ -36,26 +37,40 @@ section[data-testid="stSidebar"] {
+     border-right: 1px solid #1a2740;
+ }
+ section[data-testid="stSidebar"] * { font-family: 'Inter', sans-serif; }
++section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] { padding-top: 0.5rem; }
++section[data-testid="stSidebar"] .stMarkdown h4,
++section[data-testid="stSidebar"] .stMarkdown h5 {
++    font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase;
++    color: #5f729a; font-weight: 700; margin-top: 4px;
++}
++
++/* thanh cuộn tinh tế */
++::-webkit-scrollbar { width: 9px; height: 9px; }
++::-webkit-scrollbar-track { background: transparent; }
++::-webkit-scrollbar-thumb { background: #22314f; border-radius: 8px; }
++::-webkit-scrollbar-thumb:hover { background: #2e4066; }
+ 
+-/* ---------- hero banner ---------- */
++/* ---------- hero banner (chỉ trang Tổng quan) ---------- */
+ .neoscope-hero {
+     position: relative; overflow: hidden;
+-    border-radius: 18px; padding: 26px 30px 22px 30px; margin-bottom: 6px;
++    border-radius: 18px; padding: 24px 30px 20px 30px; margin-bottom: 4px;
+     background: linear-gradient(115deg, rgba(13,25,48,0.95) 0%, rgba(10,20,40,0.9) 55%, rgba(8,30,38,0.9) 100%);
+     border: 1px solid #22314f;
+     box-shadow: 0 18px 50px -18px rgba(2,6,17,0.9), inset 0 1px 0 rgba(120,160,220,0.08);
+ }
+ .neoscope-hero::before {
+     content: ""; position: absolute; inset: 0;
+-    background: radial-gradient(600px 180px at 90% 0%, rgba(45,212,191,0.14), transparent 60%);
++    background:
++        radial-gradient(600px 180px at 90% 0%, rgba(45,212,191,0.14), transparent 60%),
++        radial-gradient(400px 200px at 60% 120%, rgba(56,189,248,0.08), transparent 60%);
+     pointer-events: none;
+ }
+ .hero-title {
+-    font-size: 30px; font-weight: 800; letter-spacing: -0.02em; color: #f2f7ff; margin: 0;
++    font-size: 28px; font-weight: 800; letter-spacing: -0.02em; color: #f2f7ff; margin: 0;
+     background: linear-gradient(90deg, #f8fafc 30%, #7dd3fc 90%);
+     -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+ }
+-.hero-sub { color: #93a4c3; font-size: 13.5px; margin-top: 6px; max-width: 980px; line-height: 1.55; }
++.hero-sub { color: #93a4c3; font-size: 13px; margin-top: 6px; max-width: 1020px; line-height: 1.55; }
+ .hero-brand {
+     display: inline-flex; align-items: center; gap: 8px; margin-bottom: 8px;
+     font-size: 11px; font-weight: 700; letter-spacing: 0.22em; text-transform: uppercase;
+@@ -64,35 +79,61 @@ section[data-testid="stSidebar"] * { font-family: 'Inter', sans-serif; }
+ .hero-brand .dot { width: 8px; height: 8px; border-radius: 50%;
+     background: #2dd4bf; box-shadow: 0 0 12px #2dd4bf; }
+ 
++/* ---------- status strip gọn (các trang chuyên sâu) ---------- */
++.status-strip {
++    display: flex; align-items: center; flex-wrap: wrap; gap: 10px;
++    padding: 9px 14px; margin-bottom: 10px; border-radius: 12px;
++    background: linear-gradient(90deg, rgba(15,25,46,0.85), rgba(11,19,36,0.75));
++    border: 1px solid #1c2a47;
++    box-shadow: 0 8px 24px -14px rgba(2,6,17,0.8);
++}
++.status-strip .s-brand {
++    display: inline-flex; align-items: center; gap: 7px;
++    font-size: 11px; font-weight: 800; letter-spacing: 0.18em;
++    color: #2dd4bf; text-transform: uppercase; margin-right: 2px; white-space: nowrap;
++}
++.status-strip .s-brand .dot { width: 7px; height: 7px; border-radius: 50%;
++    background: #2dd4bf; box-shadow: 0 0 10px #2dd4bf; }
++.status-strip .s-title { font-size: 13px; font-weight: 600; color: #c9d6ec; margin-right: auto; }
++.status-strip .pill { margin: 0; }
++
+ /* ---------- status pills ---------- */
+-.pill-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0 4px 0; }
++.pill-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 2px 0; }
+ .pill {
+     display: inline-flex; align-items: center; gap: 7px;
+     padding: 5px 13px; border-radius: 999px; font-size: 12px; font-weight: 600;
+     border: 1px solid #22314f; color: #b9c7de; background: rgba(17,26,46,0.6);
++    white-space: nowrap;
+ }
+-.pill .pip { width: 7px; height: 7px; border-radius: 50%; }
++.pill .pip { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+ .pill.green  { border-color: rgba(52,211,153,0.4);  color: #6ee7b7; }  .pill.green  .pip { background: #34d399; box-shadow: 0 0 8px #34d399; }
+ .pill.amber  { border-color: rgba(251,191,36,0.4);  color: #fcd34d; }  .pill.amber  .pip { background: #fbbf24; box-shadow: 0 0 8px #fbbf24; }
+ .pill.red    { border-color: rgba(248,113,113,0.4); color: #fca5a5; }  .pill.red    .pip { background: #f87171; box-shadow: 0 0 8px #f87171; }
+ .pill.blue   { border-color: rgba(56,189,248,0.4);  color: #7dd3fc; }  .pill.blue   .pip { background: #38bdf8; box-shadow: 0 0 8px #38bdf8; }
+ .pill.gray   .pip { background: #64748b; }
+ 
+-/* ---------- KPI cards ---------- */
+-.kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin: 14px 0 6px 0; }
++/* ---------- KPI cards (kèm delta chip) ---------- */
++.kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(185px, 1fr)); gap: 12px; margin: 12px 0 4px 0; }
+ .kpi {
+-    position: relative; padding: 14px 16px 12px 16px; border-radius: 14px;
++    position: relative; padding: 13px 16px 11px 16px; border-radius: 14px;
+     background: linear-gradient(160deg, rgba(21,32,56,0.85), rgba(13,20,38,0.85));
+     border: 1px solid #22314f; overflow: hidden;
++    transition: border-color 0.18s ease, transform 0.18s ease;
+ }
++.kpi:hover { border-color: #2e4066; transform: translateY(-1px); }
+ .kpi::after { content:""; position:absolute; left:0; top:0; bottom:0; width: 3px;
+     background: linear-gradient(180deg, var(--kpi-c, #2dd4bf), transparent); opacity: 0.9; }
+-.kpi .k-label { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #7f92b3; }
+-.kpi .k-value { font-size: 26px; font-weight: 800; color: #f1f6ff; margin-top: 4px; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+-.kpi .k-sub { font-size: 11.5px; color: #64789c; margin-top: 3px; }
++.kpi .k-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
++.kpi .k-label { flex: 1 1 auto; min-width: 0; font-size: 10.5px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; color: #7f92b3; }
++.kpi .k-delta { font-size: 10.5px; font-weight: 700; padding: 2px 7px; border-radius: 6px; white-space: nowrap; }
++.kpi .k-delta.up   { background: rgba(52,211,153,0.14); color: #6ee7b7; }
++.kpi .k-delta.down { background: rgba(248,113,113,0.14); color: #fca5a5; }
++.kpi .k-delta.flat { background: rgba(100,116,139,0.16); color: #9fb0cc; }
++.kpi .k-value { font-size: 25px; font-weight: 800; color: #f1f6ff; margin-top: 4px; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
++.kpi .k-sub { font-size: 11px; color: #64789c; margin-top: 3px; }
+ 
+ /* ---------- section headers ---------- */
+-.sec-title { font-size: 17px; font-weight: 700; color: #e8f0fc; margin: 18px 0 2px 0; letter-spacing: -0.01em; }
++.sec-title { font-size: 16.5px; font-weight: 700; color: #e8f0fc; margin: 18px 0 2px 0; letter-spacing: -0.01em; }
+ .sec-note { font-size: 12.5px; color: #7f92b3; margin-bottom: 8px; line-height: 1.5; }
+ 
+ /* ---------- alert feed ---------- */
+@@ -100,8 +141,10 @@ section[data-testid="stSidebar"] * { font-family: 'Inter', sans-serif; }
+ .alert-item {
+     display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 11px;
+     background: rgba(17,26,46,0.6); border: 1px solid #1f2c49;
++    transition: border-color 0.15s ease;
+ }
+-.alert-item .tag { font-size: 10px; font-weight: 800; letter-spacing: 0.06em; padding: 3px 8px; border-radius: 6px; }
++.alert-item:hover { border-color: #2e4066; }
++.alert-item .tag { font-size: 10px; font-weight: 800; letter-spacing: 0.06em; padding: 3px 8px; border-radius: 6px; flex: none; }
+ .tag.p1 { background: rgba(248,113,113,0.16); color: #fca5a5; border: 1px solid rgba(248,113,113,0.35); }
+ .tag.p2 { background: rgba(251,191,36,0.14); color: #fcd34d; border: 1px solid rgba(251,191,36,0.35); }
+ .tag.p3 { background: rgba(56,189,248,0.14); color: #7dd3fc; border: 1px solid rgba(56,189,248,0.35); }
+@@ -109,6 +152,18 @@ section[data-testid="stSidebar"] * { font-family: 'Inter', sans-serif; }
+ .alert-item .a-sub { font-size: 11px; color: #64789c; }
+ .alert-item .a-time { font-size: 11px; color: #7f92b3; font-variant-numeric: tabular-nums; white-space: nowrap; }
+ 
++/* ---------- footer ---------- */
++.neoscope-footer {
++    margin-top: 34px; padding: 16px 20px; border-radius: 14px;
++    background: linear-gradient(160deg, rgba(15,23,42,0.6), rgba(10,16,30,0.6));
++    border: 1px solid #1a2740;
++    font-size: 11.5px; color: #64789c; line-height: 1.6;
++}
++.neoscope-footer b { color: #8b9bb4; }
++.neoscope-footer .f-row { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 6px; }
++.neoscope-footer .f-item { display: inline-flex; align-items: center; gap: 6px; }
++.neoscope-footer .f-item::before { content: ""; width: 4px; height: 4px; border-radius: 50%; background: #2dd4bf; }
++
+ /* ---------- misc polish ---------- */
+ [data-testid="stMetric"] { background: linear-gradient(160deg, rgba(21,32,56,0.85), rgba(13,20,38,0.85));
+     border: 1px solid #22314f; border-radius: 14px; padding: 12px 14px; }
+@@ -121,6 +176,7 @@ div[data-testid="stExpander"] { border: 1px solid #22314f; border-radius: 12px;
+ .streamlit-expanderHeader { font-weight: 600; color: #c9d6ec; }
+ hr { border-color: #1f2c49; }
+ .stInfo, .stWarning, .stError, .stSuccess { border-radius: 12px; }
++h1, h2, h3 { letter-spacing: -0.015em; }
+ #MainMenu, footer { visibility: hidden; }
+ """
+ 
+@@ -135,11 +191,23 @@ def inject() -> None:
+ 
+ 
+ def hero(brand: str, title: str, subtitle: str) -> None:
++    """Hero đầy đủ — chỉ dùng ở trang Tổng quan."""
+     st.html(
+         f'<div class="neoscope-hero"><div class="hero-brand"><span class="dot"></span>{brand}'
+         f'</div><div class="hero-title">{title}</div><div class="hero-sub">{subtitle}</div></div>')
+ 
+ 
++def status_strip(brand: str, title: str, pills: list[tuple[str, str, str]]) -> None:
++    """Thanh trạng thái gọn một hàng — dùng ở các trang chuyên sâu để nội dung
++    phân tích bắt đầu ngay, không lặp lại hero đầy đủ của trang Tổng quan."""
++    pill_html = "".join(
++        f'<span class="pill {color}" title="{tip}"><span class="pip"></span>{label}</span>'
++        for label, color, tip in pills)
++    st.html(
++        f'<div class="status-strip"><span class="s-brand"><span class="dot"></span>{brand}</span>'
++        f'<span class="s-title">{title}</span>{pill_html}</div>')
++
++
+ def pills(items: list[tuple[str, str, str]]) -> None:
+     """items: (label, color, title-tooltip ngắn)."""
+     parts = "".join(
+@@ -149,17 +217,24 @@ def pills(items: list[tuple[str, str, str]]) -> None:
+ 
+ 
+ def kpi_grid(cards: list[dict]) -> None:
+-    """cards: [{label, value, sub, color}] — hiển thị hàng KPI kiểu fintech.
++    """cards: [{label, value, sub, color, delta?, delta_dir?}] — hàng KPI kiểu fintech.
+ 
+     color: hex dùng cho thanh accent trái (mặc định teal).
++    delta (tùy chọn): chuỗi hiển thị trong chip nhỏ, vd "−0.4 so với phiên trước";
++    delta_dir: 'up' | 'down' | 'flat' — 'down' tô đỏ, 'up' tô xanh.
+     """
+-    cells = "".join(
+-        f'<div class="kpi" style="--kpi-c:{c.get("color", ACCENT)}">'
+-        f'<div class="k-label">{c["label"]}</div>'
+-        f'<div class="k-value">{c["value"]}</div>'
+-        f'<div class="k-sub">{c.get("sub", "")}</div></div>'
+-        for c in cards)
+-    st.html(f'<div class="kpi-grid">{cells}</div>')
++    cells = []
++    for c in cards:
++        delta_html = ""
++        if c.get("delta"):
++            ddir = c.get("delta_dir", "flat")
++            delta_html = f'<span class="k-delta {ddir}">{c["delta"]}</span>'
++        cells.append(
++            f'<div class="kpi" style="--kpi-c:{c.get("color", ACCENT)}">'
++            f'<div class="k-top"><span class="k-label">{c["label"]}</span>{delta_html}</div>'
++            f'<div class="k-value">{c["value"]}</div>'
++            f'<div class="k-sub">{c.get("sub", "")}</div></div>')
++    st.html(f'<div class="kpi-grid">{"".join(cells)}</div>')
+ 
+ 
+ def section(title: str, note: str = "") -> None:
+@@ -179,3 +254,17 @@ def alert_feed(items: list[dict], empty_text: str = "Không có cảnh báo nào
+         f'<div class="a-time">{i.get("time", "")}</div></div>'
+         for i in items)
+     st.html(f'<div class="alert-feed">{rows}</div>')
++
++
++def footer(provider: str, mode: str, config_hash: str) -> None:
++    """Chân trang thống nhất: bản chất công cụ học thuật + truy vết cấu hình."""
++    st.html(
++        '<div class="neoscope-footer"><b>NeoScope</b> — công cụ phân tích thanh khoản &amp; vi cấu trúc '
++        'thị trường chứng khoán Việt Nam. Sản phẩm phục vụ nghiên cứu và hỗ trợ ra quyết định; '
++        '<b>không phải khuyến nghị đầu tư</b>, không đặt lệnh thật, không dự báo giá dài hạn.'
++        '<div class="f-row">'
++        '<span class="f-item">Nguồn dữ liệu: SSI FastConnect API v3 (NEO API dự phòng)</span>'
++        '<span class="f-item">Múi giờ chuẩn: Asia/Ho_Chi_Minh (UTC+7)</span>'
++        f'<span class="f-item">Chế độ: {mode} · Nguồn: {provider}</span>'
++        f'<span class="f-item">config_hash: <code>{config_hash[:12]}…</code></span>'
++        '</div></div>')
+diff --git a/neoscope/src/neoscope/app/views.py b/neoscope/src/neoscope/app/views.py
+index a17e18c..3e6fc57 100644
+--- a/neoscope/src/neoscope/app/views.py
++++ b/neoscope/src/neoscope/app/views.py
+@@ -22,6 +22,16 @@ from .data import (fold_params_for, fmt_vnd, load_result, sigma_fallback_for,
+ 
+ 
+ # ------------------------------------------------------------------ tổng quan
++def _last_valid(day: pd.DataFrame, col: str) -> pd.Series:
++    """Giá trị HỢP LỆ CUỐI CÙNG của mỗi mã trong phiên (bỏ qua snapshot null ở
++    đầu/cuối phiên ATO-ATC nơi sổ lệnh không hợp lệ) — lát cắt cuối thô `tail(1)`
++    từng khiến KPI Spread/Depth hiển thị '—' dù dữ liệu phiên có đầy đủ."""
++    if day.empty or col not in day:
++        return pd.Series(dtype=float)
++    g = day[["symbol", col]].dropna(subset=[col])
++    return g.groupby("symbol", sort=False).tail(1).set_index("symbol")[col]
++
++
+ def view_overview(ctx: dict) -> None:
+     s, snaps, summary = ctx["settings"], ctx["snaps"], ctx["summary"]
+     st.subheader("Tổng quan thị trường")
+@@ -29,18 +39,21 @@ def view_overview(ctx: dict) -> None:
+                "Bắt đầu bằng trạng thái thanh khoản của phiên, sau đó mở chi tiết hoặc thử một lệnh giả định.")
+     day = snaps[(snaps["session_date"] == ctx["session"]) &
+                 snaps["symbol"].isin(ctx["symbols"])].sort_values("ts")
+-    latest = day.groupby("symbol", as_index=False, sort=False).tail(1) if not day.empty else day
+     lhs_day = ctx["bars_lhs"]
+     if len(lhs_day):
+         lhs_day = lhs_day[(lhs_day["session_date"] == ctx["session"]) &
+                           lhs_day["symbol"].isin(ctx["symbols"])].sort_values("bar_ts")
+-        latest_lhs = lhs_day.groupby("symbol", as_index=False, sort=False).tail(1)
+     else:
+-        latest_lhs = pd.DataFrame()
++        lhs_day = pd.DataFrame()
+ 
+-    spread = latest["spread_bps"].dropna() if len(latest) and "spread_bps" in latest else pd.Series(dtype=float)
+-    depth_cols = [c for c in ("depth_bid_vnd", "depth_ask_vnd") if c in latest]
+-    depth = latest[depth_cols].stack().dropna() if len(latest) and depth_cols else pd.Series(dtype=float)
++    # ---- phiên trước đó để tính delta cho KPI ----
++    sessions = ctx["sessions"]
++    prev_session = sessions[sessions.index(ctx["session"]) - 1] if ctx["session"] in sessions[1:] else None
++    prev = snaps[(snaps["session_date"] == prev_session) & snaps["symbol"].isin(ctx["symbols"])] if prev_session else pd.DataFrame()
++
++    spread = _last_valid(day, "spread_bps")
++    depth = pd.concat([_last_valid(day, "depth_bid_vnd"), _last_valid(day, "depth_ask_vnd")]).dropna()
++    latest = day.groupby("symbol", as_index=False, sort=False).tail(1) if not day.empty else day
+     alerts = ctx["results"].get("alerts", pd.DataFrame())
+     if len(alerts):
+         alert_cut = alerts[(alerts["session_date"] == ctx["session"]) &
+@@ -50,18 +63,52 @@ def view_overview(ctx: dict) -> None:
+     else:
+         alert_count = rare_count = 0
+ 
++    def _delta(now: float, series_prev: pd.Series, fmt: str, invert: bool = False) -> tuple[str, str]:
++        """Chênh lệch trung vị so với phiên trước → (text, hướng màu)."""
++        if prev_session and len(series_prev) and np.isfinite(now):
++            d = now - float(series_prev.median())
++            if abs(d) <= 1e-12:
++                return "=", "flat"
++            good = (d < 0) if invert else (d > 0)
++            return fmt.format(d), ("up" if good else "down")
++        return "", "flat"
++
++    spread_now = float(spread.median()) if len(spread) else np.nan
++    depth_now = float(depth.median() / 1e9) if len(depth) else np.nan
++    lhs_latest = lhs_day.dropna(subset=["lhs"]).groupby("symbol", sort=False).tail(1) if len(lhs_day) else pd.DataFrame()
++    lhs_now = float(lhs_latest["lhs"].median()) if len(lhs_latest) and lhs_latest["lhs"].notna().any() else np.nan
++    spread_prev = _last_valid(prev, "spread_bps") if prev_session else pd.Series(dtype=float)
++    depth_prev = (pd.concat([_last_valid(prev, "depth_bid_vnd"), _last_valid(prev, "depth_ask_vnd")]).dropna()
++                  if prev_session else pd.Series(dtype=float))
++    lhs_prev = pd.Series(dtype=float)
++    if prev_session and len(ctx["bars_lhs"]):
++        lp = ctx["bars_lhs"][(ctx["bars_lhs"]["session_date"] == prev_session) &
++                             ctx["bars_lhs"]["symbol"].isin(ctx["symbols"])].dropna(subset=["lhs"])
++        if len(lp):
++            lhs_prev = lp.groupby("symbol", sort=False).tail(1)["lhs"]
++
++    d_spread = _delta(spread_now, spread_prev, "{:+.2f} bps", invert=True)
++    d_depth = _delta(depth_now, depth_prev / 1e9, "{:+.2f} tỷ")
++    d_lhs = _delta(lhs_now, lhs_prev, "{:+.1f} điểm")
++
+     theme.kpi_grid([
+         {"label": "Mã trong lát cắt", "value": f"{len(latest):,}",
+          "sub": "có snapshot trong phiên", "color": "#38bdf8"},
+-        {"label": "Spread trung vị", "value": f"{spread.median():.2f} bps" if len(spread) else "—",
+-         "sub": "chi phí tức thời · thấp hơn = tốt hơn", "color": "#2dd4bf"},
+-        {"label": "Độ sâu hiển thị", "value": f"{depth.median() / 1e9:.2f} tỷ đ" if len(depth) else "—",
+-         "sub": "depth bid/ask 3 mức cuối phiên", "color": "#a78bfa"},
++        {"label": "Spread trung vị",
++         "value": f"{spread_now:.2f} bps" if np.isfinite(spread_now) else "—",
++         "sub": "chi phí tức thờI · thấp hơn = tốt hơn", "color": "#2dd4bf",
++         "delta": d_spread[0], "delta_dir": d_spread[1]},
++        {"label": "Độ sâu hiển thị",
++         "value": f"{depth_now:.2f} tỷ đ" if np.isfinite(depth_now) else "—",
++         "sub": "depth bid/ask 3 mức · giá trị hợp lệ cuối phiên", "color": "#a78bfa",
++         "delta": d_depth[0], "delta_dir": d_depth[1]},
+         {"label": "LHS trung vị",
+-         "value": f"{latest_lhs['lhs'].median():.1f}/100" if len(latest_lhs) and latest_lhs["lhs"].notna().any() else "—",
+-         "sub": "sức khỏe thanh khoản tổng hợp", "color": "#34d399"},
++         "value": f"{lhs_now:.1f}/100" if np.isfinite(lhs_now) else "—",
++         "sub": "sức khỏe thanh khoản tổng hợp", "color": "#34d399",
++         "delta": d_lhs[0], "delta_dir": d_lhs[1]},
+         {"label": "Cảnh báo · P1/P2", "value": f"{rare_count} / {alert_count}",
+-         "sub": "hiếm / tổng số cảnh báo phiên", "color": "#fbbf24" if rare_count else "#64748b"},
++         "sub": "hiếm / tổng số cảnh báo phiên",
++         "color": "#fbbf24" if rare_count else "#64748b"},
+     ])
+ 
+     # ---------------- Alert Pulse Feed: dòng chảy cảnh báo gần nhất của phiên ----------------
+@@ -100,29 +147,65 @@ def view_overview(ctx: dict) -> None:
+             t_latest = lhs_valid["bar_ts"].max()
+             rank = lhs_valid[lhs_valid["bar_ts"] == t_latest]
+             st.plotly_chart(ch.lhs_ranking(rank), width="stretch",
+-                            alt="Xếp hạng LHS của các mã được chọn tại thời điểm có dữ liệu mới nhất.")
++                            alt="Xếp hạng LHS của các mã được chọn tại thởi điểm có dữ liệu mới nhất.")
+             st.caption(f"Cắt ngang lúc {pd.Timestamp(t_latest).strftime('%H:%M')} UTC+7 · điểm tương đối.")
+         else:
+             st.info("Chưa đủ dữ liệu liên tục để tính LHS; cần ít nhất năm bar.")
+ 
++    # ---------------- Băng thanh khoản nội phiên (mã tự chọn) ----------------
++    if not day.empty:
++        tape_syms = sorted(day["symbol"].unique())
++        sel_col, _ = st.columns([1, 3])
++        tape_sym = sel_col.selectbox("Soi băng thanh khoản nội phiên của mã", tape_syms,
++                                     key="ov_tape_sym")
++        tape_day = day[day["symbol"] == tape_sym]
++        if len(tape_day):
++            st.plotly_chart(ch.tape(tape_day), width="stretch",
++                            alt=f"Băng giao dịch nội phiên của {tape_sym}: mid, giá khớp và độ sâu hai phía.")
++
++    # ---------------- Watchlist (kèm sparkline LHS) ----------------
+     st.markdown("#### Watchlist · snapshot gần nhất theo mã")
+     if day.empty:
+         st.info("Không có snapshot phù hợp bộ lọc. Chọn mã khác hoặc kiểm tra lại nguồn dữ liệu.")
+         return
++    lhs_series: dict[str, list[float]] = {}
++    if len(lhs_day):
++        for sym, g in lhs_day.dropna(subset=["lhs"]).groupby("symbol", sort=False):
++            lhs_series[sym] = g.sort_values("bar_ts")["lhs"].round(1).tolist()
++    def _num(v) -> float:
++        """None/NaN → np.nan để bảng hiển thị ô trống thay vì chữ 'None'."""
++        try:
++            f = float(v)
++        except (TypeError, ValueError):
++            return np.nan
++        return f if np.isfinite(f) else np.nan
++
++    mid_last = _last_valid(day, "mid")
++    obi_last = _last_valid(day, "obi")
+     rows = []
+     for _, last in latest.iterrows():
+         sym = last["symbol"]
++        depth_bid_last = _last_valid(day[day["symbol"] == sym], "depth_bid_vnd").get(sym, np.nan)
+         rows.append({"Mã": sym, "Nhóm": "VN30 lớn" if s.group_of(sym) == "large" else "Midcap mỏng",
+-                     "Mid cuối (đ)": last["mid"], "Spread (bps)": last["spread_bps"],
+-                     "Depth bid (tỷ đ)": last["depth_bid_vnd"] / 1e9 if pd.notna(last["depth_bid_vnd"]) else np.nan,
+-                     "OBI": last["obi"], "KL phiên (triệu cp)": last["cum_vol"] / 1e6 if pd.notna(last["cum_vol"]) else np.nan})
++                     "LHS phiên": lhs_series.get(sym, []),
++                     "Mid cuối (đ)": _num(mid_last.get(sym, np.nan)),
++                     "Spread (bps)": _num(spread.get(sym, np.nan)),
++                     "Depth bid (tỷ đ)": depth_bid_last / 1e9 if pd.notna(depth_bid_last) else np.nan,
++                     "OBI": _num(obi_last.get(sym, np.nan)),
++                     "KL phiên (triệu cp)": _num(last["cum_vol"]) / 1e6})
++    wl = pd.DataFrame(rows).set_index("Mã").sort_values("Mid cuối (đ)", ascending=False)
+     with st.container(border=True):
+-        st.dataframe(pd.DataFrame(rows).set_index("Mã"), width="stretch",
+-                     column_config={"Mid cuối (đ)": st.column_config.NumberColumn(format="%.0f"),
+-                                    "Spread (bps)": st.column_config.NumberColumn(format="%.1f"),
+-                                    "Depth bid (tỷ đ)": st.column_config.NumberColumn(format="%.2f"),
+-                                    "OBI": st.column_config.NumberColumn(format="%.2f"),
+-                                    "KL phiên (triệu cp)": st.column_config.NumberColumn(format="%.2f")})
++        st.dataframe(wl, width="stretch",
++                     column_config={
++                         "LHS phiên": st.column_config.LineChartColumn(
++                             "LHS trong phiên", y_min=0, y_max=100, width="medium"),
++                         "Mid cuối (đ)": st.column_config.NumberColumn(format="%.0f"),
++                         "Spread (bps)": st.column_config.NumberColumn(format="%.1f"),
++                         "Depth bid (tỷ đ)": st.column_config.NumberColumn(format="%.2f"),
++                         "OBI": st.column_config.NumberColumn(format="%.2f"),
++                         "KL phiên (triệu cp)": st.column_config.NumberColumn(format="%.2f")})
++        st.download_button("⬇ Tải watchlist (CSV)", wl.drop(columns=["LHS phiên"]).to_csv().encode("utf-8-sig"),
++                           file_name=f"neoscope_watchlist_{ctx['session']}.csv", mime="text/csv")
+     with st.expander("Phạm vi sử dụng & độ bao phủ nghiên cứu"):
+         st.info("NeoScope là **công cụ phân tích học thuật** — không phải khuyến nghị mua/bán, "
+                 "không đặt lệnh thật, không dự báo giá dài hạn.", icon="⚖️")
+@@ -172,9 +255,14 @@ def view_lhs(ctx: dict) -> None:
+         pick = at_t[at_t["symbol"] == sym]
+         row = (pick if len(pick) else at_t).iloc[0]
+         sym = str(row["symbol"])
+-        st.metric(f"LHS của {sym} lúc {pd.Timestamp(t_sel).strftime('%H:%M')}", f"{row['lhs']:.1f}/100")
+-        st.plotly_chart(ch.component_breakdown(row), width="stretch",
+-                        alt="Năm cấu phần percentile giải thích điểm LHS của mã đã chọn.")
++        g1, g2 = st.columns([1, 1.35])
++        with g1:
++            st.plotly_chart(ch.lhs_gauge(float(row["lhs"]), sym, str(row.get("group", "large"))),
++                            width="stretch",
++                            alt=f"Đồng hồ LHS của {sym} tại thởi điểm đã chọn.")
++        with g2:
++            st.plotly_chart(ch.component_breakdown(row), width="stretch",
++                            alt="Năm cấu phần percentile giải thích điểm LHS của mã đã chọn.")
+ 
+     theme.section("Liquidity Radar · so 'chân dung' thanh khoản giữa hai mã",
+                   "Cùng một điểm LHS có thể đến từ hình dáng rất khác nhau — radar cho thấy mã nào chắc ở đâu, "
+@@ -200,6 +288,12 @@ def view_lhs(ctx: dict) -> None:
+     st.plotly_chart(ch.lhs_timeseries(day, syms), width="stretch",
+                     alt="Diễn biến điểm LHS trong ngày của các mã được chọn.")
+ 
++    theme.section("Phân phối LHS trong phiên",
++                  "Hai nhóm thanh khoản tách bạch đến đâu trong cùng một phiên — khoảng cách giữa hai phân phối "
++                  "chính là 'phí' rủi ro thanh khoản của nhóm midcap mỏng.")
++    st.plotly_chart(ch.lhs_dist(day), width="stretch",
++                    alt="Phân phối điểm LHS của từng nhóm thanh khoản trong phiên.")
++
+     st.markdown("#### Độ nhạy trọng số (kiểm tra robustness)")
+     sens = ctx["results"].get("lhs_sensitivity", pd.DataFrame())
+     if len(sens):
+@@ -399,10 +493,24 @@ def view_alerts(ctx: dict) -> None:
+     f = alerts[alerts["session_date"].isin(sel_sessions or []) &
+                alerts["type"].isin(sel_types or []) & alerts["symbol"].isin(sel_syms or [])]
+     f = f[f["priority"].isin(sel_priority or [])]
+-    st.metric("Số cảnh báo khớp bộ lọc", len(f))
++    theme.kpi_grid([
++        {"label": "Cảnh báo khớp bộ lọc", "value": f"{len(f):,}",
++         "sub": "tất cả mức ưu tiên", "color": "#38bdf8"},
++        {"label": "P1 · Rất hiếm", "value": f"{int((f.get('priority', '') == 'P1').sum()):,}",
++         "sub": "đuôi phân vị ≥ 99,9%", "color": "#f87171"},
++        {"label": "P2 · Hiếm", "value": f"{int((f.get('priority', '') == 'P2').sum()):,}",
++         "sub": "đuôi phân vị ≥ 99,5%", "color": "#fbbf24"},
++        {"label": "Mã có cảnh báo", "value": f"{f['symbol'].nunique():,}" if len(f) else "0",
++         "sub": "khác nhau trong lát cắt", "color": "#a78bfa"},
++    ])
+     if f.empty:
+         st.info("Không có cảnh báo khớp bộ lọc — nới bộ lọc hoặc chọn phiên khác.")
+         return
++    st.plotly_chart(ch.alert_timeline(f), width="stretch",
++                    alt="Timeline cảnh báo: thờI điểm × loại, kích thước và màu theo mức ưu tiên.")
++    with st.expander("⬇ Xuất danh sách cảnh báo (CSV)"):
++        st.download_button("Tải CSV", f.to_csv(index=False).encode("utf-8-sig"),
++                           file_name="neoscope_alerts.csv", mime="text/csv")
+     priority_rank = {"P1": 0, "P2": 1, "P3": 2}
+     show = f.assign(_priority_rank=f.get("priority", "P3").map(priority_rank)).sort_values(
+         ["_priority_rank", "ts"], ascending=[True, False]).copy()
+-- 
+2.39.5
+

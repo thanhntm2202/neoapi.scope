@@ -320,3 +320,92 @@ def alert_pr_bar(pr: pd.DataFrame) -> go.Figure:
     fig.update_yaxes(range=[0, 115], title="%")
     fig.update_layout(barmode="group")
     return _base(fig, 330, "Đối chiếu cảnh báo với sự kiện ground-truth (chỉ có ở chế độ SYNTHETIC)")
+
+
+# ------------------------------------------------------------------ bổ sung nâng cấp UI
+def lhs_gauge(value: float, symbol: str, group: str) -> go.Figure:
+    """Đồng hồ LHS của một mã — đọc nhanh mức sức khỏe thanh khoản tại một thởi điểm."""
+    color = GROUP_COLORS.get(group, C_ACCENT)
+    fig = go.Figure(go.Indicator(
+        mode="gauge+number", value=value,
+        number=dict(font=dict(size=30, color="#f1f6ff"), suffix="/100"),
+        title=dict(text=f"LHS · {symbol}", font=dict(size=13, color=C_TEXT)),
+        gauge=dict(
+            axis=dict(range=[0, 100], tickfont=dict(size=10, color=C_MUTED), tickcolor=C_GRID),
+            bar=dict(color=color, thickness=0.28),
+            bgcolor="rgba(17,26,46,0.5)",
+            bordercolor=C_GRID, borderwidth=1,
+            steps=[
+                dict(range=[0, 33], color="rgba(248,113,113,0.10)"),
+                dict(range=[33, 66], color="rgba(251,191,36,0.10)"),
+                dict(range=[66, 100], color="rgba(52,211,153,0.10)"),
+            ],
+        )))
+    fig.update_layout(margin=dict(l=24, r=24, t=42, b=8))
+    return _base(fig, 235, None)
+
+
+def tape(snaps_day_sym: pd.DataFrame) -> go.Figure:
+    """Băng giao dịch nội phiên: mid + độ sâu hai phía + khối lượng từng nhịp.
+
+    Cho ngưởi dùng 'thấy' toàn bộ hành trình thanh khoản của mã trong phiên —
+    đây là lớp trực quan cấp cao còn thiếu của dashboard.
+    """
+    g = snaps_day_sym.sort_values("ts")
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.62, 0.38],
+                        vertical_spacing=0.06,
+                        subplot_titles=("Mid & giá khớp", "Độ sâu hiển thị hai phía (VND)"))
+    fig.add_trace(go.Scatter(x=g["ts"], y=g["mid"], name="Mid", line=dict(color=C_ACCENT, width=1.6)), row=1, col=1)
+    lp = g["last_price"].dropna()
+    fig.add_trace(go.Scatter(x=g.loc[lp.index, "ts"], y=lp, name="Giá khớp", mode="markers",
+                             marker=dict(size=3, color="#94a3b8", opacity=0.7)), row=1, col=1)
+    for col, name, color, fill in (("depth_bid_vnd", "Depth bid", C_LARGE, "rgba(56,189,248,0.18)"),
+                                   ("depth_ask_vnd", "Depth ask", C_THIN, "rgba(251,191,36,0.14)")):
+        if col in g:
+            fig.add_trace(go.Scatter(x=g["ts"], y=g[col], name=name, line=dict(color=color, width=1.2),
+                                     fillcolor=fill, fill="tozeroy"), row=2, col=1)
+    fig.update_xaxes(title="Giờ (UTC+7)", row=2, col=1)
+    sym = g["symbol"].iloc[0] if len(g) else "—"
+    fig = _base(fig, 420, f"Băng thanh khoản nội phiên · {sym}")
+    fig.update_layout(legend=dict(orientation="h", yanchor="top", y=-0.22, x=0))
+    return fig
+
+
+def alert_timeline(alerts: pd.DataFrame) -> go.Figure:
+    """Timeline cảnh báo: trục giờ × loại cảnh báo, kích thước và màu theo mức ưu tiên.
+
+    Cho thấy phân bố thờI điểm bất thường trong phiên — nhận diện cụm sự kiện
+    (vd nhiều mã cùng sốc vào một khung giờ) mà bảng không thể hiện được.
+    """
+    d = alerts.copy()
+    prio_color = {"P1": C_BAD, "P2": "#fbbf24", "P3": C_LARGE}
+    d["color"] = d.get("priority", "P3").map(lambda p: prio_color.get(p, C_LARGE))
+    d["size"] = d.get("priority", "P3").map({"P1": 13, "P2": 10, "P3": 8}).fillna(8)
+    fig = go.Figure()
+    for sym, g in d.groupby("symbol"):
+        fig.add_trace(go.Scatter(
+            x=g["ts"], y=g["type"], mode="markers", name=sym,
+            marker=dict(size=g["size"], color=g["color"], opacity=0.85, line=dict(width=1, color="#0a0f1c")),
+            hovertemplate=(f"{sym} · %{{y}}<br>%{{x|%H:%M:%S}} · z=%{{customdata:.2f}}<extra></extra>"),
+            customdata=g["z"] if "z" in g else None))
+    fig.update_xaxes(title="Giờ (UTC+7)")
+    fig.update_yaxes(title=None, automargin=True)
+    fig = _base(fig, 340, "Timeline cảnh báo trong các phiên đã chọn — cụm sự kiện nhìn một lần thấy ngay")
+    # legend nhiều mã: đặt dưới cùng để không đè tiêu đề
+    fig.update_layout(legend=dict(orientation="h", yanchor="top", y=-0.28, x=0))
+    return fig
+
+
+def lhs_dist(day_lhs: pd.DataFrame) -> go.Figure:
+    """Phân phối LHS trong phiên theo nhóm — độ tách biệt giữa nhóm thanh khoản cao và mỏng."""
+    fig = go.Figure()
+    for grp, color in GROUP_COLORS.items():
+        g = day_lhs[(day_lhs["group"] == grp) & day_lhs["lhs"].notna()]
+        if len(g):
+            fig.add_trace(go.Histogram(x=g["lhs"], name=f"Nhóm {grp} (n={len(g):,} bar)",
+                                       marker_color=color, opacity=0.6, nbinsx=30,
+                                       hovertemplate="LHS %{x:.0f}: %{y} bar<extra></extra>"))
+    fig.update_layout(barmode="overlay")
+    fig.update_xaxes(title="LHS (0–100)", range=[0, 100])
+    fig.update_yaxes(title="Số bar 1 phút")
+    return _base(fig, 300, "Phân phối LHS nội phiên theo nhóm thanh khoản")

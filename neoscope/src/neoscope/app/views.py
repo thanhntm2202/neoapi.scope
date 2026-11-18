@@ -22,6 +22,16 @@ from .data import (fold_params_for, fmt_vnd, load_result, sigma_fallback_for,
 
 
 # ------------------------------------------------------------------ tổng quan
+def _last_valid(day: pd.DataFrame, col: str) -> pd.Series:
+    """Giá trị HỢP LỆ CUỐI CÙNG của mỗi mã trong phiên (bỏ qua snapshot null ở
+    đầu/cuối phiên ATO-ATC nơi sổ lệnh không hợp lệ) — lát cắt cuối thô `tail(1)`
+    từng khiến KPI Spread/Depth hiển thị '—' dù dữ liệu phiên có đầy đủ."""
+    if day.empty or col not in day:
+        return pd.Series(dtype=float)
+    g = day[["symbol", col]].dropna(subset=[col])
+    return g.groupby("symbol", sort=False).tail(1).set_index("symbol")[col]
+
+
 def view_overview(ctx: dict) -> None:
     s, snaps, summary = ctx["settings"], ctx["snaps"], ctx["summary"]
     st.subheader("Tổng quan thị trường")
@@ -29,18 +39,21 @@ def view_overview(ctx: dict) -> None:
                "Bắt đầu bằng trạng thái thanh khoản của phiên, sau đó mở chi tiết hoặc thử một lệnh giả định.")
     day = snaps[(snaps["session_date"] == ctx["session"]) &
                 snaps["symbol"].isin(ctx["symbols"])].sort_values("ts")
-    latest = day.groupby("symbol", as_index=False, sort=False).tail(1) if not day.empty else day
     lhs_day = ctx["bars_lhs"]
     if len(lhs_day):
         lhs_day = lhs_day[(lhs_day["session_date"] == ctx["session"]) &
                           lhs_day["symbol"].isin(ctx["symbols"])].sort_values("bar_ts")
-        latest_lhs = lhs_day.groupby("symbol", as_index=False, sort=False).tail(1)
     else:
-        latest_lhs = pd.DataFrame()
+        lhs_day = pd.DataFrame()
 
-    spread = latest["spread_bps"].dropna() if len(latest) and "spread_bps" in latest else pd.Series(dtype=float)
-    depth_cols = [c for c in ("depth_bid_vnd", "depth_ask_vnd") if c in latest]
-    depth = latest[depth_cols].stack().dropna() if len(latest) and depth_cols else pd.Series(dtype=float)
+    # ---- phiên trước đó để tính delta cho KPI ----
+    sessions = ctx["sessions"]
+    prev_session = sessions[sessions.index(ctx["session"]) - 1] if ctx["session"] in sessions[1:] else None
+    prev = snaps[(snaps["session_date"] == prev_session) & snaps["symbol"].isin(ctx["symbols"])] if prev_session else pd.DataFrame()
+
+    spread = _last_valid(day, "spread_bps")
+    depth = pd.concat([_last_valid(day, "depth_bid_vnd"), _last_valid(day, "depth_ask_vnd")]).dropna()
+    latest = day.groupby("symbol", as_index=False, sort=False).tail(1) if not day.empty else day
     alerts = ctx["results"].get("alerts", pd.DataFrame())
     if len(alerts):
         alert_cut = alerts[(alerts["session_date"] == ctx["session"]) &
@@ -50,18 +63,52 @@ def view_overview(ctx: dict) -> None:
     else:
         alert_count = rare_count = 0
 
+    def _delta(now: float, series_prev: pd.Series, fmt: str, invert: bool = False) -> tuple[str, str]:
+        """Chênh lệch trung vị so với phiên trước → (text, hướng màu)."""
+        if prev_session and len(series_prev) and np.isfinite(now):
+            d = now - float(series_prev.median())
+            if abs(d) <= 1e-12:
+                return "=", "flat"
+            good = (d < 0) if invert else (d > 0)
+            return fmt.format(d), ("up" if good else "down")
+        return "", "flat"
+
+    spread_now = float(spread.median()) if len(spread) else np.nan
+    depth_now = float(depth.median() / 1e9) if len(depth) else np.nan
+    lhs_latest = lhs_day.dropna(subset=["lhs"]).groupby("symbol", sort=False).tail(1) if len(lhs_day) else pd.DataFrame()
+    lhs_now = float(lhs_latest["lhs"].median()) if len(lhs_latest) and lhs_latest["lhs"].notna().any() else np.nan
+    spread_prev = _last_valid(prev, "spread_bps") if prev_session else pd.Series(dtype=float)
+    depth_prev = (pd.concat([_last_valid(prev, "depth_bid_vnd"), _last_valid(prev, "depth_ask_vnd")]).dropna()
+                  if prev_session else pd.Series(dtype=float))
+    lhs_prev = pd.Series(dtype=float)
+    if prev_session and len(ctx["bars_lhs"]):
+        lp = ctx["bars_lhs"][(ctx["bars_lhs"]["session_date"] == prev_session) &
+                             ctx["bars_lhs"]["symbol"].isin(ctx["symbols"])].dropna(subset=["lhs"])
+        if len(lp):
+            lhs_prev = lp.groupby("symbol", sort=False).tail(1)["lhs"]
+
+    d_spread = _delta(spread_now, spread_prev, "{:+.2f} bps", invert=True)
+    d_depth = _delta(depth_now, depth_prev / 1e9, "{:+.2f} tỷ")
+    d_lhs = _delta(lhs_now, lhs_prev, "{:+.1f} điểm")
+
     theme.kpi_grid([
         {"label": "Mã trong lát cắt", "value": f"{len(latest):,}",
          "sub": "có snapshot trong phiên", "color": "#38bdf8"},
-        {"label": "Spread trung vị", "value": f"{spread.median():.2f} bps" if len(spread) else "—",
-         "sub": "chi phí tức thời · thấp hơn = tốt hơn", "color": "#2dd4bf"},
-        {"label": "Độ sâu hiển thị", "value": f"{depth.median() / 1e9:.2f} tỷ đ" if len(depth) else "—",
-         "sub": "depth bid/ask 3 mức cuối phiên", "color": "#a78bfa"},
+        {"label": "Spread trung vị",
+         "value": f"{spread_now:.2f} bps" if np.isfinite(spread_now) else "—",
+         "sub": "chi phí tức thờI · thấp hơn = tốt hơn", "color": "#2dd4bf",
+         "delta": d_spread[0], "delta_dir": d_spread[1]},
+        {"label": "Độ sâu hiển thị",
+         "value": f"{depth_now:.2f} tỷ đ" if np.isfinite(depth_now) else "—",
+         "sub": "depth bid/ask 3 mức · giá trị hợp lệ cuối phiên", "color": "#a78bfa",
+         "delta": d_depth[0], "delta_dir": d_depth[1]},
         {"label": "LHS trung vị",
-         "value": f"{latest_lhs['lhs'].median():.1f}/100" if len(latest_lhs) and latest_lhs["lhs"].notna().any() else "—",
-         "sub": "sức khỏe thanh khoản tổng hợp", "color": "#34d399"},
+         "value": f"{lhs_now:.1f}/100" if np.isfinite(lhs_now) else "—",
+         "sub": "sức khỏe thanh khoản tổng hợp", "color": "#34d399",
+         "delta": d_lhs[0], "delta_dir": d_lhs[1]},
         {"label": "Cảnh báo · P1/P2", "value": f"{rare_count} / {alert_count}",
-         "sub": "hiếm / tổng số cảnh báo phiên", "color": "#fbbf24" if rare_count else "#64748b"},
+         "sub": "hiếm / tổng số cảnh báo phiên",
+         "color": "#fbbf24" if rare_count else "#64748b"},
     ])
 
     # ---------------- Alert Pulse Feed: dòng chảy cảnh báo gần nhất của phiên ----------------
@@ -100,29 +147,65 @@ def view_overview(ctx: dict) -> None:
             t_latest = lhs_valid["bar_ts"].max()
             rank = lhs_valid[lhs_valid["bar_ts"] == t_latest]
             st.plotly_chart(ch.lhs_ranking(rank), width="stretch",
-                            alt="Xếp hạng LHS của các mã được chọn tại thời điểm có dữ liệu mới nhất.")
+                            alt="Xếp hạng LHS của các mã được chọn tại thởi điểm có dữ liệu mới nhất.")
             st.caption(f"Cắt ngang lúc {pd.Timestamp(t_latest).strftime('%H:%M')} UTC+7 · điểm tương đối.")
         else:
             st.info("Chưa đủ dữ liệu liên tục để tính LHS; cần ít nhất năm bar.")
 
+    # ---------------- Băng thanh khoản nội phiên (mã tự chọn) ----------------
+    if not day.empty:
+        tape_syms = sorted(day["symbol"].unique())
+        sel_col, _ = st.columns([1, 3])
+        tape_sym = sel_col.selectbox("Soi băng thanh khoản nội phiên của mã", tape_syms,
+                                     key="ov_tape_sym")
+        tape_day = day[day["symbol"] == tape_sym]
+        if len(tape_day):
+            st.plotly_chart(ch.tape(tape_day), width="stretch",
+                            alt=f"Băng giao dịch nội phiên của {tape_sym}: mid, giá khớp và độ sâu hai phía.")
+
+    # ---------------- Watchlist (kèm sparkline LHS) ----------------
     st.markdown("#### Watchlist · snapshot gần nhất theo mã")
     if day.empty:
         st.info("Không có snapshot phù hợp bộ lọc. Chọn mã khác hoặc kiểm tra lại nguồn dữ liệu.")
         return
+    lhs_series: dict[str, list[float]] = {}
+    if len(lhs_day):
+        for sym, g in lhs_day.dropna(subset=["lhs"]).groupby("symbol", sort=False):
+            lhs_series[sym] = g.sort_values("bar_ts")["lhs"].round(1).tolist()
+    def _num(v) -> float:
+        """None/NaN → np.nan để bảng hiển thị ô trống thay vì chữ 'None'."""
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            return np.nan
+        return f if np.isfinite(f) else np.nan
+
+    mid_last = _last_valid(day, "mid")
+    obi_last = _last_valid(day, "obi")
     rows = []
     for _, last in latest.iterrows():
         sym = last["symbol"]
+        depth_bid_last = _last_valid(day[day["symbol"] == sym], "depth_bid_vnd").get(sym, np.nan)
         rows.append({"Mã": sym, "Nhóm": "VN30 lớn" if s.group_of(sym) == "large" else "Midcap mỏng",
-                     "Mid cuối (đ)": last["mid"], "Spread (bps)": last["spread_bps"],
-                     "Depth bid (tỷ đ)": last["depth_bid_vnd"] / 1e9 if pd.notna(last["depth_bid_vnd"]) else np.nan,
-                     "OBI": last["obi"], "KL phiên (triệu cp)": last["cum_vol"] / 1e6 if pd.notna(last["cum_vol"]) else np.nan})
+                     "LHS phiên": lhs_series.get(sym, []),
+                     "Mid cuối (đ)": _num(mid_last.get(sym, np.nan)),
+                     "Spread (bps)": _num(spread.get(sym, np.nan)),
+                     "Depth bid (tỷ đ)": depth_bid_last / 1e9 if pd.notna(depth_bid_last) else np.nan,
+                     "OBI": _num(obi_last.get(sym, np.nan)),
+                     "KL phiên (triệu cp)": _num(last["cum_vol"]) / 1e6})
+    wl = pd.DataFrame(rows).set_index("Mã").sort_values("Mid cuối (đ)", ascending=False)
     with st.container(border=True):
-        st.dataframe(pd.DataFrame(rows).set_index("Mã"), width="stretch",
-                     column_config={"Mid cuối (đ)": st.column_config.NumberColumn(format="%.0f"),
-                                    "Spread (bps)": st.column_config.NumberColumn(format="%.1f"),
-                                    "Depth bid (tỷ đ)": st.column_config.NumberColumn(format="%.2f"),
-                                    "OBI": st.column_config.NumberColumn(format="%.2f"),
-                                    "KL phiên (triệu cp)": st.column_config.NumberColumn(format="%.2f")})
+        st.dataframe(wl, width="stretch",
+                     column_config={
+                         "LHS phiên": st.column_config.LineChartColumn(
+                             "LHS trong phiên", y_min=0, y_max=100, width="medium"),
+                         "Mid cuối (đ)": st.column_config.NumberColumn(format="%.0f"),
+                         "Spread (bps)": st.column_config.NumberColumn(format="%.1f"),
+                         "Depth bid (tỷ đ)": st.column_config.NumberColumn(format="%.2f"),
+                         "OBI": st.column_config.NumberColumn(format="%.2f"),
+                         "KL phiên (triệu cp)": st.column_config.NumberColumn(format="%.2f")})
+        st.download_button("⬇ Tải watchlist (CSV)", wl.drop(columns=["LHS phiên"]).to_csv().encode("utf-8-sig"),
+                           file_name=f"neoscope_watchlist_{ctx['session']}.csv", mime="text/csv")
     with st.expander("Phạm vi sử dụng & độ bao phủ nghiên cứu"):
         st.info("NeoScope là **công cụ phân tích học thuật** — không phải khuyến nghị mua/bán, "
                 "không đặt lệnh thật, không dự báo giá dài hạn.", icon="⚖️")
@@ -172,9 +255,14 @@ def view_lhs(ctx: dict) -> None:
         pick = at_t[at_t["symbol"] == sym]
         row = (pick if len(pick) else at_t).iloc[0]
         sym = str(row["symbol"])
-        st.metric(f"LHS của {sym} lúc {pd.Timestamp(t_sel).strftime('%H:%M')}", f"{row['lhs']:.1f}/100")
-        st.plotly_chart(ch.component_breakdown(row), width="stretch",
-                        alt="Năm cấu phần percentile giải thích điểm LHS của mã đã chọn.")
+        g1, g2 = st.columns([1, 1.35])
+        with g1:
+            st.plotly_chart(ch.lhs_gauge(float(row["lhs"]), sym, str(row.get("group", "large"))),
+                            width="stretch",
+                            alt=f"Đồng hồ LHS của {sym} tại thởi điểm đã chọn.")
+        with g2:
+            st.plotly_chart(ch.component_breakdown(row), width="stretch",
+                            alt="Năm cấu phần percentile giải thích điểm LHS của mã đã chọn.")
 
     theme.section("Liquidity Radar · so 'chân dung' thanh khoản giữa hai mã",
                   "Cùng một điểm LHS có thể đến từ hình dáng rất khác nhau — radar cho thấy mã nào chắc ở đâu, "
@@ -199,6 +287,12 @@ def view_lhs(ctx: dict) -> None:
     syms = ctx["symbols"]
     st.plotly_chart(ch.lhs_timeseries(day, syms), width="stretch",
                     alt="Diễn biến điểm LHS trong ngày của các mã được chọn.")
+
+    theme.section("Phân phối LHS trong phiên",
+                  "Hai nhóm thanh khoản tách bạch đến đâu trong cùng một phiên — khoảng cách giữa hai phân phối "
+                  "chính là 'phí' rủi ro thanh khoản của nhóm midcap mỏng.")
+    st.plotly_chart(ch.lhs_dist(day), width="stretch",
+                    alt="Phân phối điểm LHS của từng nhóm thanh khoản trong phiên.")
 
     st.markdown("#### Độ nhạy trọng số (kiểm tra robustness)")
     sens = ctx["results"].get("lhs_sensitivity", pd.DataFrame())
@@ -399,10 +493,24 @@ def view_alerts(ctx: dict) -> None:
     f = alerts[alerts["session_date"].isin(sel_sessions or []) &
                alerts["type"].isin(sel_types or []) & alerts["symbol"].isin(sel_syms or [])]
     f = f[f["priority"].isin(sel_priority or [])]
-    st.metric("Số cảnh báo khớp bộ lọc", len(f))
+    theme.kpi_grid([
+        {"label": "Cảnh báo khớp bộ lọc", "value": f"{len(f):,}",
+         "sub": "tất cả mức ưu tiên", "color": "#38bdf8"},
+        {"label": "P1 · Rất hiếm", "value": f"{int((f.get('priority', '') == 'P1').sum()):,}",
+         "sub": "đuôi phân vị ≥ 99,9%", "color": "#f87171"},
+        {"label": "P2 · Hiếm", "value": f"{int((f.get('priority', '') == 'P2').sum()):,}",
+         "sub": "đuôi phân vị ≥ 99,5%", "color": "#fbbf24"},
+        {"label": "Mã có cảnh báo", "value": f"{f['symbol'].nunique():,}" if len(f) else "0",
+         "sub": "khác nhau trong lát cắt", "color": "#a78bfa"},
+    ])
     if f.empty:
         st.info("Không có cảnh báo khớp bộ lọc — nới bộ lọc hoặc chọn phiên khác.")
         return
+    st.plotly_chart(ch.alert_timeline(f), width="stretch",
+                    alt="Timeline cảnh báo: thờI điểm × loại, kích thước và màu theo mức ưu tiên.")
+    with st.expander("⬇ Xuất danh sách cảnh báo (CSV)"):
+        st.download_button("Tải CSV", f.to_csv(index=False).encode("utf-8-sig"),
+                           file_name="neoscope_alerts.csv", mime="text/csv")
     priority_rank = {"P1": 0, "P2": 1, "P3": 2}
     show = f.assign(_priority_rank=f.get("priority", "P3").map(priority_rank)).sort_values(
         ["_priority_rank", "ts"], ascending=[True, False]).copy()

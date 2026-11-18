@@ -28,9 +28,19 @@ from neoscope.app.data import (freshness, load_bars, load_indices, load_quality,
 from neoscope.app.views import (view_alerts, view_data, view_execution, view_lhs,
                                 view_method, view_overview, view_validation)
 
-st.set_page_config(page_title="NeoScope | Phân tích thanh khoản", page_icon=":material/analytics:",
-                   layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="NeoScope | Phòng phân tích thanh khoản & vi cấu trúc",
+                   page_icon=":material/analytics:", layout="wide", initial_sidebar_state="expanded")
 theme.inject()
+
+PAGE_TITLES = {
+    "overview": "Tổng quan thị trường",
+    "liquidity": "Thanh khoản · so sánh cấu phần LHS",
+    "execution-cost": "Mô phỏng chi phí thực thi",
+    "alerts": "Cảnh báo bất thường",
+    "validation": "Kiểm chứng ngoài mẫu",
+    "data-quality": "Dữ liệu & chất lượng",
+    "methodology": "Phương pháp & giới hạn",
+}
 
 LOAD_WARNINGS: list[str] = []
 
@@ -63,33 +73,80 @@ sessions = sessions_of(snaps)
 
 ctx: dict = {}
 
+# ---- Header chung: hero đầy đủ chỉ ở trang Tổng quan; các trang chuyên sâu
+# dùng status strip gọn một hàng để nội dung phân tích bắt đầu ngay đầu trang.
+_HEADER: dict = {}
+
+
+def _build_pills() -> list[tuple[str, str, str]]:
+    items: list[tuple[str, str, str]] = []
+    if mode == "SYNTHETIC":
+        items.append(("DỮ LIỆU MÔ PHỎNG · SYNTHETIC", "amber",
+                      "Bộ sinh dữ liệu có seed; không phải thị trường thật"))
+    else:
+        ws_state = str(_HEADER["live_status"].get("state", "not started")).lower()
+        items.append((f"WebSocket · {ws_state}",
+                      {"connected": "green", "stale": "amber", "failed": "red"}.get(ws_state, "gray"),
+                      "Trạng thái luồng dữ liệu thời gian thực của recorder"))
+    items.append((f"Nguồn · {s.provider}", "blue",
+                  "SSI FastConnect API v3 là nguồn cốt lõi; NEO là dự phòng"))
+    items.append((f"Phiên · {session}", "gray", "Phiên giao dịch đang phân tích"))
+    items.append((f"Cập nhật · {freshness(snaps)}", "gray", "Thởi điểm sự kiện gần nhất trong dữ liệu (UTC+7)"))
+    return items
+
+
+def _render_header(url_path: str) -> None:
+    if url_path == "overview":
+        theme.hero(
+            brand=f"NEOSCOPE · NGUỒN {s.provider} FASTCONNECT API v3",
+            title="Phòng phân tích thanh khoản &amp; vi cấu trúc thị trường Việt Nam",
+            subtitle="Công cụ nghiên cứu cho nhà đầu tư, môi giới và chuyên viên phân tích: đo sức khỏe thanh khoản "
+                     "(LHS), ước tính chi phí thực thi lệnh giả định theo Implementation Shortfall, và truy nguyên "
+                     "cảnh báo bất thường bằng ngưỡng thống kê. Dữ liệu SSI FastConnect API v3 — chỉ đọc, "
+                     "không đặt lệnh thật, không phải khuyến nghị đầu tư.")
+        theme.pills(_build_pills())
+        st.warning("**DỮ LIỆU MÔ PHỎNG** · Kết quả chỉ kiểm chứng cơ chế trên bộ sinh synthetic, "
+                   "không đại diện cho thị trường thật. Seed và phiên bản generator có trong manifest.",
+                   icon=":material/science:")
+    else:
+        theme.status_strip(
+            brand="NEOSCOPE",
+            title=PAGE_TITLES.get(url_path, ""),
+            pills=_build_pills())
+
+
+def _wrap(url_path: str, view) -> None:
+    _render_header(url_path)
+    view(ctx)
+    theme.footer(s.provider, mode, chash)
+
 
 def _overview_page() -> None:
-    view_overview(ctx)
+    _wrap("overview", view_overview)
 
 
 def _liquidity_page() -> None:
-    view_lhs(ctx)
+    _wrap("liquidity", view_lhs)
 
 
 def _execution_page() -> None:
-    view_execution(ctx)
+    _wrap("execution-cost", view_execution)
 
 
 def _alerts_page() -> None:
-    view_alerts(ctx)
+    _wrap("alerts", view_alerts)
 
 
 def _validation_page() -> None:
-    view_validation(ctx)
+    _wrap("validation", view_validation)
 
 
 def _data_page() -> None:
-    view_data(ctx)
+    _wrap("data-quality", view_data)
 
 
 def _method_page() -> None:
-    view_method(ctx)
+    _wrap("methodology", view_method)
 
 
 page = st.navigation(
@@ -155,33 +212,7 @@ with st.sidebar:
         st.cache_data.clear()
         st.rerun()
 
-theme.hero(
-    brand=f"NEOSCOPE · NGUỒN {s.provider} FASTCONNECT API v3",
-    title="Phòng phân tích thanh khoản &amp; vi cấu trúc thị trường Việt Nam",
-    subtitle="Công cụ nghiên cứu cho nhà đầu tư, môi giới và chuyên viên phân tích: đo sức khỏe thanh khoản "
-             "(LHS), ước tính chi phí thực thi lệnh giả định theo Implementation Shortfall, và truy nguyên "
-             "cảnh báo bất thường bằng ngưỡng thống kê. Dữ liệu SSI FastConnect API v3 — chỉ đọc, "
-             "không đặt lệnh thật, không phải khuyến nghị đầu tư.")
-_pills: list[tuple[str, str, str]] = []
-if mode == "SYNTHETIC":
-    _pills.append(("DỮ LIỆU MÔ PHỎNG · SYNTHETIC", "amber", "Bộ sinh dữ liệu có seed; không phải thị trường thật"))
-else:
-    ws_state = str(live_status.get("state", "not started")).lower()
-    _pills.append((f"WebSocket · {ws_state}",
-                   {"connected": "green", "stale": "amber", "failed": "red"}.get(ws_state, "gray"),
-                   "Trạng thái luồng dữ liệu thời gian thực của recorder"))
-_pills.append((f"Nguồn · {s.provider}", "blue", "SSI FastConnect API v3 là nguồn cốt lõi; NEO là dự phòng"))
-_pills.append((f"Phiên · {session}", "gray", "Phiên giao dịch đang phân tích"))
-_pills.append((f"Cập nhật · {freshness(snaps)} · UTC+7", "gray", "Thời điểm sự kiện gần nhất trong dữ liệu"))
-_pills.append(("Múi giờ · Asia/Ho_Chi_Minh", "gray", "Mọi dấu thời gian chuẩn hóa theo UTC+7"))
-theme.pills(_pills)
-if mode == "SYNTHETIC":
-    st.warning("**DỮ LIỆU MÔ PHỎNG** · Kết quả chỉ kiểm chứng cơ chế trên bộ sinh synthetic, "
-               "không đại diện cho thị trường thật. Seed và phiên bản generator có trong manifest.",
-               icon=":material/science:")
-else:
-    st.info(f"**DỮ LIỆU LIVE · {s.provider}** · Dữ liệu và kết quả được tách theo nguồn. "
-            "Ứng dụng không gọi endpoint đặt lệnh.", icon=":material/candlestick_chart:")
+_HEADER["live_status"] = live_status
 
 bars = _load_optional("bars", load_bars, data_mode, chash, default=pd.DataFrame())
 bars_lhs = _load_optional("LHS", load_result, "bars_lhs.parquet", chash, default=pd.DataFrame())
