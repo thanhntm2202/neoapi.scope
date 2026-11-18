@@ -21,6 +21,7 @@ if __package__ in (None, ""):
 import streamlit as st
 import pandas as pd
 
+from neoscope.app import theme
 from neoscope.app.data import (freshness, load_bars, load_indices, load_quality,
                                load_result, load_snaps, load_summary,
                                session_manifests, sessions_of, settings)
@@ -29,6 +30,7 @@ from neoscope.app.views import (view_alerts, view_data, view_execution, view_lhs
 
 st.set_page_config(page_title="NeoScope | Phân tích thanh khoản", page_icon=":material/analytics:",
                    layout="wide", initial_sidebar_state="expanded")
+theme.inject()
 
 LOAD_WARNINGS: list[str] = []
 
@@ -153,19 +155,26 @@ with st.sidebar:
         st.cache_data.clear()
         st.rerun()
 
-st.title("NeoScope")
-st.caption("Công cụ nghiên cứu cho nhà đầu tư, môi giới và nhà phân tích: đo thanh khoản, "
-           "ước tính chi phí lệnh giả định và truy nguyên cảnh báo.")
-with st.container(horizontal=True, gap="medium"):
-    if mode == "SYNTHETIC":
-        st.badge("DỮ LIỆU MÔ PHỎNG", icon=":material/science:", color="orange")
-    else:
-        ws_state = str(live_status.get("state", "not started")).lower()
-        ws_color = {"connected": "green", "stale": "orange", "failed": "red"}.get(ws_state, "gray")
-        st.badge(f"WebSocket · {ws_state}", icon=":material/cable:", color=ws_color)
-    st.badge(f"Nguồn · {s.provider}", icon=":material/database:", color="blue")
-    st.badge(f"Phiên · {session}", icon=":material/calendar_today:", color="gray")
-    st.badge(f"Cập nhật · {freshness(snaps)} · UTC+7", icon=":material/schedule:", color="gray")
+theme.hero(
+    brand=f"NEOSCOPE · NGUỒN {s.provider} FASTCONNECT API v3",
+    title="Phòng phân tích thanh khoản &amp; vi cấu trúc thị trường Việt Nam",
+    subtitle="Công cụ nghiên cứu cho nhà đầu tư, môi giới và chuyên viên phân tích: đo sức khỏe thanh khoản "
+             "(LHS), ước tính chi phí thực thi lệnh giả định theo Implementation Shortfall, và truy nguyên "
+             "cảnh báo bất thường bằng ngưỡng thống kê. Dữ liệu SSI FastConnect API v3 — chỉ đọc, "
+             "không đặt lệnh thật, không phải khuyến nghị đầu tư.")
+_pills: list[tuple[str, str, str]] = []
+if mode == "SYNTHETIC":
+    _pills.append(("DỮ LIỆU MÔ PHỎNG · SYNTHETIC", "amber", "Bộ sinh dữ liệu có seed; không phải thị trường thật"))
+else:
+    ws_state = str(live_status.get("state", "not started")).lower()
+    _pills.append((f"WebSocket · {ws_state}",
+                   {"connected": "green", "stale": "amber", "failed": "red"}.get(ws_state, "gray"),
+                   "Trạng thái luồng dữ liệu thời gian thực của recorder"))
+_pills.append((f"Nguồn · {s.provider}", "blue", "SSI FastConnect API v3 là nguồn cốt lõi; NEO là dự phòng"))
+_pills.append((f"Phiên · {session}", "gray", "Phiên giao dịch đang phân tích"))
+_pills.append((f"Cập nhật · {freshness(snaps)} · UTC+7", "gray", "Thời điểm sự kiện gần nhất trong dữ liệu"))
+_pills.append(("Múi giờ · Asia/Ho_Chi_Minh", "gray", "Mọi dấu thời gian chuẩn hóa theo UTC+7"))
+theme.pills(_pills)
 if mode == "SYNTHETIC":
     st.warning("**DỮ LIỆU MÔ PHỎNG** · Kết quả chỉ kiểm chứng cơ chế trên bộ sinh synthetic, "
                "không đại diện cho thị trường thật. Seed và phiên bản generator có trong manifest.",

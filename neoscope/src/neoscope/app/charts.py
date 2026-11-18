@@ -11,28 +11,32 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-C_LARGE = "#1d4ed8"
-C_THIN = "#b45309"
-C_ACCENT = "#0f766e"
-C_BAD = "#b91c1c"
-C_GOOD = "#15803d"
+C_LARGE = "#38bdf8"
+C_THIN = "#fbbf24"
+C_ACCENT = "#2dd4bf"
+C_BAD = "#f87171"
+C_GOOD = "#34d399"
+C_GRID = "#1c2942"
+C_TEXT = "#b8c5da"
+C_MUTED = "#64789c"
 GROUP_COLORS = {"large": C_LARGE, "thin": C_THIN}
-MODEL_COLORS = {"naive_mid": "#94a3b8", "ladder_only": "#f59e0b", "full": "#0f766e"}
+MODEL_COLORS = {"naive_mid": "#64748b", "ladder_only": "#fbbf24", "full": "#2dd4bf"}
 
 
 def _base(fig: go.Figure, height: int = 360, title: str | None = None) -> go.Figure:
     fig.update_layout(
-        template="plotly_white", height=height,
+        template="plotly_dark", height=height,
         margin=dict(l=10, r=10, t=48 if title else 24, b=10),
-        paper_bgcolor="#ffffff", plot_bgcolor="#ffffff",
-        font=dict(family="Inter, Segoe UI, sans-serif", size=13, color="#25364a"),
-        title=dict(text=title, font=dict(size=15, color="#172b4d")) if title else None,
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(family="Inter, Segoe UI, sans-serif", size=13, color=C_TEXT),
+        title=dict(text=title, font=dict(size=15, color="#e8f0fc")) if title else None,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0,
-                    font=dict(size=11), bgcolor="rgba(255,255,255,0.8)"),
-        hoverlabel=dict(font_size=12, bgcolor="#172b4d", font_color="#ffffff"),
+                    font=dict(size=11, color=C_TEXT), bgcolor="rgba(10,15,28,0.6)"),
+        hoverlabel=dict(font_size=12, bgcolor="#0d1424", font_color="#e6edf7",
+                        bordercolor="#22314f"),
     )
-    fig.update_xaxes(gridcolor="#edf2f7", zerolinecolor="#d8e1ea", linecolor="#d8e1ea")
-    fig.update_yaxes(gridcolor="#edf2f7", zerolinecolor="#d8e1ea", linecolor="#d8e1ea")
+    fig.update_xaxes(gridcolor=C_GRID, zerolinecolor=C_GRID, linecolor=C_GRID)
+    fig.update_yaxes(gridcolor=C_GRID, zerolinecolor=C_GRID, linecolor=C_GRID)
     return fig
 
 
@@ -273,6 +277,38 @@ def resilience_hist(res: pd.DataFrame) -> go.Figure:
     fig.update_xaxes(title="Thời gian phục hồi độ sâu (giây)", range=[0, 180])
     fig.update_yaxes(title="Số episode")
     return _base(fig, 320, "Khả năng phục hồi sau cú sốc khối lượng (resilience)")
+
+
+def lhs_radar(rows: list[tuple[str, pd.Series]]) -> go.Figure:
+    """Radar 5 cấu phần LHS — so trực quan 'chân dung thanh khoản' của 1–2 mã.
+
+    rows: [(symbol, row_của_bars_lhs)] — mỗi row phải có r_tightness, r_depth,
+    r_immediacy, r_stability, r_balance (hạng percentile 0–1).
+    """
+    comps = ["tightness", "depth", "immediacy", "stability", "balance"]
+    labels = ["Độ chặt spread", "Độ sâu", "Tức thời (ILLIQ)", "Ổn định spread", "Cân bằng OBI"]
+    fig = go.Figure()
+    for symbol, row in rows:
+        vals = [100 * float(row[f"r_{c}"]) for c in comps]
+        grp = row.get("group", "large")
+        color = GROUP_COLORS.get(grp, C_ACCENT)
+        fig.add_trace(go.Scatterpolar(
+            r=vals + [vals[0]], theta=labels + [labels[0]], name=symbol,
+            line=dict(color=color, width=2.2),
+            fillcolor=color, fill="toself",
+            opacity=0.18 if len(rows) > 1 else 0.30,
+            hovertemplate=f"{symbol} %{{theta}}: %{{r:.0f}}%<extra></extra>",
+        ))
+    fig.update_layout(
+        polar=dict(
+            bgcolor="rgba(0,0,0,0)",
+            radialaxis=dict(range=[0, 100], gridcolor=C_GRID, tickfont=dict(size=10, color=C_MUTED),
+                            tickvals=[25, 50, 75, 100]),
+            angularaxis=dict(gridcolor=C_GRID, tickfont=dict(size=11.5, color=C_TEXT)),
+        ),
+        showlegend=True,
+    )
+    return _base(fig, 420, "Radar 5 cấu phần thanh khoản — hình dáng quan trọng hơn điểm tổng")
 
 
 def alert_pr_bar(pr: pd.DataFrame) -> go.Figure:

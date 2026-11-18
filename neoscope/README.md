@@ -62,7 +62,7 @@ neoscope validate
 neoscope --mode LIVE app
 ```
 
-SSI depth is collected through its quote stream. The NEO recorder can also take a REST snapshot with `neoscope snapshot`. Each recorder start gets a unique capture directory beginning `LIVE_SSI_<date>_...` or `LIVE_NEO_<date>_...`; live results are separated by provider under `data/results/`. Do not treat sessions from different providers as one uninterrupted time series without a documented reconciliation study.
+SSI depth is collected through its quote stream. SSI FastConnect v3 **REST** is also integrated (market-data only, OAuth2 token + token-bucket rate limit): `DailyOHLCHistory` for long-run OHLC context and `Securities` for watchlist validation — see `src/neoscope/ssi_api/rest.py` and [docs/ssi_fastconnect.md](docs/ssi_fastconnect.md). Fetch history for the watchlist with `neoscope history --from-date 2026-01-01 --to-date 2026-11-16`. The NEO recorder can also take a REST snapshot with `neoscope snapshot`. Each recorder start gets a unique capture directory beginning `LIVE_SSI_<date>_...` or `LIVE_NEO_<date>_...`; live results are separated by provider under `data/results/`. Do not treat sessions from different providers as one uninterrupted time series without a documented reconciliation study.
 
 SSI's published quote examples express book prices in VND thousands while trade messages express prices in VND. Its adapter scales quote-book and market-band prices by 1,000 into canonical VND. SDK-decoded, provider-shaped messages are retained for audit; these are not packet-level copies of original wire bytes. Foreign buy/sell fields stay in SSI RAW messages until SSI confirms their counter semantics. Provider-specific missing fields remain null.
 
@@ -77,7 +77,7 @@ Reproducible synthetic stream ─┘          → microstructure indicators → 
                                               → Streamlit research dashboard
 ```
 
-The dashboard is organized into seven pages under **Analysis** and **Research administration**. The overview starts with session/watchlist KPIs (spread, displayed depth, LHS and alerts), paired market-breadth/liquidity-rank charts, and the selected-symbol table. A shared session/watchlist filter, provider/mode state, last event timestamp, and refresh control remain visible across the workflow. The other pages cover LHS composition, paper execution, alert evidence, out-of-sample validation, data quality, and methods/limits. Empty, stale, and unavailable-data states explain what the user can check next. The paper matching engine is isolated from all provider clients.
+The dashboard is organized into seven pages under **Analysis** and **Research administration**, presented with a unified dark design system (`src/neoscope/app/theme.py`): a hero banner with provider/mode/timezone status pills, KPI cards, an Alert Pulse feed on the overview, and a two-symbol **Liquidity Radar** (five LHS components) on the liquidity page. The overview starts with session/watchlist KPIs (spread, displayed depth, LHS and alerts), paired market-breadth/liquidity-rank charts, and the selected-symbol table. A shared session/watchlist filter, provider/mode state, last event timestamp, and refresh control remain visible across the workflow. The other pages cover LHS composition, paper execution, alert evidence, out-of-sample validation, data quality, and methods/limits. Empty, stale, and unavailable-data states explain what the user can check next. The paper matching engine is isolated from all provider clients.
 
 ## Reproducibility and safety
 
@@ -99,6 +99,7 @@ The dashboard is organized into seven pages under **Analysis** and **Research ad
 | `neoscope all` | Run the full synthetic pipeline (or processing stages for LIVE) |
 | `neoscope record` | Record selected live provider (SSI default; NEO backup) |
 | `neoscope snapshot` | Capture a NEO REST stock-detail snapshot |
+| `neoscope history` | LIVE SSI: fetch daily OHLC history via FastConnect v3 REST |
 | `neoscope app` | Open the dashboard |
 
 See [docs/provider_contracts.md](docs/provider_contracts.md) for provider roles and fallback steps, [docs/ssi_fastconnect.md](docs/ssi_fastconnect.md) for SSI's primary provider contract, [docs/methodology.md](docs/methodology.md) for measures and assumptions, and [docs/limitations.md](docs/limitations.md) for research limitations.

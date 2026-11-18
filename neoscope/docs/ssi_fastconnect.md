@@ -25,6 +25,18 @@ REST Market Data can authenticate without OTP. SSI's current Stream guidance is 
 
 Switching provider requires an explicit `.env` change and recorder restart. Neither feed is silently substituted into the other provider's session. Each capture has a unique `LIVE_SSI_<date>_<time>_<capture-id>` namespace; NEO uses the corresponding `LIVE_NEO_...` prefix. Validation outputs also have provider-specific namespaces.
 
+## REST (nhóm API thứ hai, chỉ Market Data)
+
+Bên cạnh luồng WebSocket, NeoScope tích hợp REST client riêng (`src/neoscope/ssi_api/rest.py`) — **không dùng SDK cho REST** để parser phòng thủ được kiểm thử độc lập. Đường dẫn endpoint nằm trong `settings.yaml → ssi_api.rest` vì SSI có thể đổi phiên bản đường dẫn; parser chấp nhận nhiều dạng tên trường đã công bố (camel/snake, lồng `data` hoặc phẳng).
+
+| Endpoint | Mục đích trong bài toán | Chuẩn hóa đầu ra |
+|---|---|---|
+| `api/v3/Market/AccessToken` | OAuth2 token (clientId/apiKey/apiSecret); cache theo TTL, refresh trước khi hết hạn và khi 401 | không lưu token ra đĩa/log |
+| `api/v3/Market/DailyOHLCHistory` | Bối cảnh giá dài hạn: đối chiếu độ lớn giá, kiểm tra lệch đơn vị nghìn-đ/VND so với luồng tick, ngưỡng biến động dài hạn | `ohlc_frame()`: một cột một đại lượng, dedup theo ngày, loại `close ≤ 0` |
+| `api/v3/Market/Securities` | Hợp lệ hóa watchlist trước khi subscribe stream | `securities_frame()`/`validate_watchlist()` |
+
+Kỹ thuật dùng chung với client NEO: token-bucket tần suất (mặc định 5 RPS), backoff cho 429/5xx, báo cáo tuân thủ `compliance_report()`. Cả hai module REST đều **không có** hàm đặt/sửa/hủy lệnh — kiểm chứng tĩnh trong `tests/test_ssi_rest.py::test_module_has_no_trading_endpoints` và `tests/test_safety.py`.
+
 ## Data-use cautions
 
 - A quote is a snapshot of the visible book, not a complete order-level feed. It cannot identify queue position or hidden liquidity.

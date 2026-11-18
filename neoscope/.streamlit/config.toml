@@ -1,29 +1,29 @@
 [theme]
-base = "light"
-primaryColor = "#0f766e"
-backgroundColor = "#f5f7fa"
-secondaryBackgroundColor = "#ffffff"
-textColor = "#172b4d"
-borderColor = "#d8e1ea"
-linkColor = "#0f766e"
+base = "dark"
+primaryColor = "#2dd4bf"
+backgroundColor = "#0a0f1c"
+secondaryBackgroundColor = "#111a2e"
+textColor = "#e6edf7"
+borderColor = "#22314f"
+linkColor = "#38bdf8"
 font = "sans serif"
 headingFont = "sans serif"
 codeFont = "monospace"
 baseRadius = "medium"
 showWidgetBorder = true
 showSidebarBorder = true
-paddingTop = "1rem"
+paddingTop = "1.2rem"
 paddingBottom = "2rem"
-chartCategoricalColors = ["#1d4ed8", "#b45309", "#0f766e", "#7c3aed", "#b91c1c", "#047857"]
+chartCategoricalColors = ["#38bdf8", "#fbbf24", "#2dd4bf", "#a78bfa", "#f87171", "#34d399"]
 
 [theme.sidebar]
-backgroundColor = "#edf2f7"
-secondaryBackgroundColor = "#ffffff"
-textColor = "#172b4d"
-borderColor = "#d8e1ea"
-primaryColor = "#0f766e"
-codeBackgroundColor = "#e7edf4"
-codeTextColor = "#172b4d"
+backgroundColor = "#0d1424"
+secondaryBackgroundColor = "#111a2e"
+textColor = "#c9d6ec"
+borderColor = "#1a2740"
+primaryColor = "#2dd4bf"
+codeBackgroundColor = "#0a101e"
+codeTextColor = "#7dd3fc"
 paddingTop = "0.75rem"
 paddingBottom = "1rem"
 

@@ -28,6 +28,14 @@ ssi_api:
   max_retries: 3
   ws_watchdog_s: 45          # không thấy thông điệp trong phiên -> tái kết nối
   ingest_queue_size: 10000   # buffer hữu hạn; quá tải dừng capture thay vì âm thầm bỏ tick
+  rest:                      # SSI FastConnect v3 REST (chỉ Market Data; đường dẫn cấu hình được)
+    auth_path: api/v3/Market/AccessToken          # OAuth2 token (clientId/apiKey/apiSecret)
+    ohlc_path: api/v3/Market/DailyOHLCHistory     # lịch sử OHLC ngày (đối chiếu dài hạn)
+    securities_path: api/v3/Market/Securities     # danh mục chứng khoán (hợp lệ hóa watchlist)
+    ohlc_page_size: 100
+    securities_page_size: 1000
+    token_ttl_margin_s: 120    # refresh trước khi hết hạn
+    backoff_s: 1.0
 
 watchlist:
   large: [HPG, VCB, FPT, SSI]   # nhóm thanh khoản cao (VN30)

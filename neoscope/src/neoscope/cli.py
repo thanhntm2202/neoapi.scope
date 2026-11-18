@@ -207,6 +207,35 @@ def cmd_snapshot(args) -> None:
         client.close()
 
 
+def cmd_history(args) -> None:
+    """Lấy lịch sử OHLC ngày qua SSI FastConnect v3 REST cho watchlist."""
+    from .ssi_api.rest import SsiRestClient
+
+    settings = load_settings(args.config)
+    if settings.mode != "LIVE":
+        raise RuntimeError("`neoscope history` cần NEOSCOPE_MODE=LIVE (nguồn SSI FastConnect v3).")
+    symbols = args.symbols or settings.watchlist()
+    out_dir = settings.data_path("history")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    with SsiRestClient(settings) as client:
+        frames = []
+        for sym in symbols:
+            df = client.ohlc_frame(sym, args.market, args.from_date, args.to_date)
+            if len(df):
+                frames.append(df)
+                logger.info("SSI OHLC {}: {} phiên, {} → {}",
+                            sym, len(df), df["session_date"].iloc[0], df["session_date"].iloc[-1])
+            else:
+                logger.warning("SSI OHLC {}: không có dữ liệu", sym)
+        if not frames:
+            raise RuntimeError("Không lấy được dữ liệu OHLC nào — kiểm tra quyền Market Data của key.")
+        all_df = pd.concat(frames, ignore_index=True)
+        path = out_dir / f"ssi_ohlc_{args.from_date}_{args.to_date}.parquet"
+        write_parquet(all_df, path)
+        logger.info("Đã lưu {} bản ghi → {} | tuân thủ tần suất: {}",
+                    len(all_df), path, client.compliance_report())
+
+
 def cmd_app(args) -> None:
     app_path = Path(__file__).parent / "app" / "main.py"
     cmd = [sys.executable, "-m", "streamlit", "run", str(app_path),
@@ -243,6 +272,12 @@ def main() -> None:
     p.set_defaults(fn=cmd_record)
     p = sub.add_parser("snapshot", help="LIVE NEO: ghi snapshot cổ phiếu qua REST")
     p.set_defaults(fn=cmd_snapshot)
+    p = sub.add_parser("history", help="LIVE SSI: tải lịch sử OHLC ngày qua FastConnect v3 REST")
+    p.add_argument("--from-date", dest="from_date", required=True, help="YYYY-MM-DD")
+    p.add_argument("--to-date", dest="to_date", required=True, help="YYYY-MM-DD")
+    p.add_argument("--market", default="HOSE")
+    p.add_argument("--symbols", nargs="*", default=None, help="mặc định: watchlist trong settings.yaml")
+    p.set_defaults(fn=cmd_history)
     p = sub.add_parser("app", help="mở dashboard")
     p.add_argument("--port", type=int, default=8501)
     p.set_defaults(fn=cmd_app)

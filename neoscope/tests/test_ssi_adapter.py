@@ -288,6 +288,7 @@ def test_recorder_uses_only_market_data_stream_and_closes_capture(
     assert status["state"] == "stopped"
     assert "secret-test" not in json.dumps(manifest)
     assert "secret-test" not in json.dumps(status)
-    assert otp not in json.dumps(manifest)
-    assert otp not in json.dumps(status)
+    if otp:  # chuỗi rỗng luôn là tập con của mọi chuỗi; chỉ kiểm khi OTP thật sự được dùng
+        assert otp not in json.dumps(manifest)
+        assert otp not in json.dumps(status)
 

@@ -16,7 +16,7 @@ from ..config import REPO_ROOT
 from ..data.store import search_ts
 from ..finance.execution import trading_costs_bps
 from ..simulator.matching import simulate_order
-from . import charts as ch
+from . import charts as ch, theme
 from .data import (fold_params_for, fmt_vnd, load_result, sigma_fallback_for,
                    volume_profile_for)
 
@@ -50,17 +50,35 @@ def view_overview(ctx: dict) -> None:
     else:
         alert_count = rare_count = 0
 
-    with st.grid("auto", min_column_width=170, gap="medium"):
-        st.metric("Mã trong lát cắt", f"{len(latest):,}",
-                  help="Số mã được chọn có snapshot trong phiên.", border=True)
-        st.metric("Spread trung vị", f"{spread.median():.2f} bps" if len(spread) else "—",
-                  help="Spread báo giá trên snapshot cuối của từng mã; giá trị thấp hơn thường đồng nghĩa chi phí tức thời thấp hơn.", border=True)
-        st.metric("Độ sâu hiển thị", f"{depth.median() / 1e9:.2f} tỷ đ" if len(depth) else "—",
-                  help="Trung vị giá trị depth bid/ask trên snapshot cuối; chỉ gồm các mức được feed cung cấp.", border=True)
-        st.metric("LHS trung vị", f"{latest_lhs['lhs'].median():.1f}/100" if len(latest_lhs) and latest_lhs["lhs"].notna().any() else "—",
-                  help="Điểm tổng hợp tương đối của các percentile cấu phần, không phải xác suất hay khuyến nghị.", border=True)
-        st.metric("Cảnh báo · P1/P2", f"{rare_count} / {alert_count}",
-                  help="Cảnh báo trong phiên và watchlist; P1/P2 biểu thị độ hiếm lịch sử.", border=True)
+    theme.kpi_grid([
+        {"label": "Mã trong lát cắt", "value": f"{len(latest):,}",
+         "sub": "có snapshot trong phiên", "color": "#38bdf8"},
+        {"label": "Spread trung vị", "value": f"{spread.median():.2f} bps" if len(spread) else "—",
+         "sub": "chi phí tức thời · thấp hơn = tốt hơn", "color": "#2dd4bf"},
+        {"label": "Độ sâu hiển thị", "value": f"{depth.median() / 1e9:.2f} tỷ đ" if len(depth) else "—",
+         "sub": "depth bid/ask 3 mức cuối phiên", "color": "#a78bfa"},
+        {"label": "LHS trung vị",
+         "value": f"{latest_lhs['lhs'].median():.1f}/100" if len(latest_lhs) and latest_lhs["lhs"].notna().any() else "—",
+         "sub": "sức khỏe thanh khoản tổng hợp", "color": "#34d399"},
+        {"label": "Cảnh báo · P1/P2", "value": f"{rare_count} / {alert_count}",
+         "sub": "hiếm / tổng số cảnh báo phiên", "color": "#fbbf24" if rare_count else "#64748b"},
+    ])
+
+    # ---------------- Alert Pulse Feed: dòng chảy cảnh báo gần nhất của phiên ----------------
+    if len(alerts):
+        alert_cut_feed = alerts[(alerts["session_date"] == ctx["session"]) &
+                                alerts["symbol"].isin(ctx["symbols"])]
+        if len(alert_cut_feed):
+            feed = alert_cut_feed.sort_values("ts", ascending=False).head(6)
+            items = [{
+                "priority": str(r.get("priority", "P3")),
+                "title": f"{r['symbol']} · {r['type']}",
+                "sub": f"z = {r['z']:.2f} · phân vị {r['pct']:.3f} · n_train = {r['n_train']}",
+                "time": pd.Timestamp(r["ts"]).strftime("%H:%M:%S"),
+            } for _, r in feed.iterrows()]
+            theme.section("Alert Pulse · cảnh báo mới nhất trong phiên",
+                          "Sáu cảnh báo gần nhất khớp bộ lọc; truy nguyên đầy đủ ở trang Cảnh báo.")
+            theme.alert_feed(items)
 
     ds = summary.get("dataset", {})
     day_idx = ctx["indices"][ctx["indices"]["session_date"] == ctx["session"]] if len(ctx["indices"]) else pd.DataFrame()
@@ -157,6 +175,27 @@ def view_lhs(ctx: dict) -> None:
         st.metric(f"LHS của {sym} lúc {pd.Timestamp(t_sel).strftime('%H:%M')}", f"{row['lhs']:.1f}/100")
         st.plotly_chart(ch.component_breakdown(row), width="stretch",
                         alt="Năm cấu phần percentile giải thích điểm LHS của mã đã chọn.")
+
+    theme.section("Liquidity Radar · so 'chân dung' thanh khoản giữa hai mã",
+                  "Cùng một điểm LHS có thể đến từ hình dáng rất khác nhau — radar cho thấy mã nào chắc ở đâu, "
+                  "yếu ở đâu (hạng percentile chéo watchlist, càng rộng càng khỏe).")
+    radar_options = at_t.sort_values("lhs", ascending=False)["symbol"].tolist()
+    rc1, rc2 = st.columns(2)
+    sym_a = rc1.selectbox("Mã A", radar_options, index=0, key="radar_a")
+    sym_b = rc2.selectbox("Mã B", [x for x in radar_options if x != sym_a] or radar_options,
+                          index=0, key="radar_b")
+    rows_radar = []
+    for s_ in dict.fromkeys([sym_a, sym_b]):  # giữ thứ tự, loại trùng
+        p = at_t[at_t["symbol"] == s_]
+        if len(p):
+            rows_radar.append((s_, p.iloc[0]))
+    if len(rows_radar) >= 2:
+        st.plotly_chart(ch.lhs_radar(rows_radar), width="stretch",
+                        alt="Radar so sánh năm cấu phần LHS của hai mã đã chọn.")
+    else:
+        st.info("Chọn hai mã khác nhau để so radar.")
+    theme.section("Diễn biến LHS trong phiên",
+                  "Cửa sổ trượt 15 phút; nét liền = nhóm thanh khoản cao, nét chấm = nhóm midcap mỏng.")
     syms = ctx["symbols"]
     st.plotly_chart(ch.lhs_timeseries(day, syms), width="stretch",
                     alt="Diễn biến điểm LHS trong ngày của các mã được chọn.")
