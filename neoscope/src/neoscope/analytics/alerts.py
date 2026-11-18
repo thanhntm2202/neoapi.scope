@@ -112,6 +112,16 @@ def _gate_ok(vals_j: float, z: float, pct: float, b: dict,
         (z <= -z_thr and pct <= 1.0 - pct_thr)
 
 
+def _priority(pct: float, direction: str) -> str:
+    """Rank a triggered event by its empirical tail rarity, not by loss probability."""
+    tail_pct = pct if direction == "high" else 1.0 - pct
+    if tail_pct >= 0.999:
+        return "P1"
+    if tail_pct >= 0.995:
+        return "P2"
+    return "P3"
+
+
 def run_alerts(settings: Settings, snaps_all: pd.DataFrame) -> pd.DataFrame:
     """Quét expanding theo phiên — baseline chỉ từ quá khứ, bằng chứng đầy đủ.
 
@@ -223,6 +233,7 @@ def run_alerts(settings: Settings, snaps_all: pd.DataFrame) -> pd.DataFrame:
                             "session_date": ds, "symbol": sym,
                             "group": settings.group_of(sym),
                             "ts": ts_j, "type": atype, "direction": direction,
+                            "priority": _priority(float(pct_arr[j]), direction),
                             "scale": spec["tf"],
                             "value": float(v[j]),
                             "signed_value": float(raw[gj]) if np.isfinite(raw[gj]) else np.nan,
@@ -240,7 +251,7 @@ def run_alerts(settings: Settings, snaps_all: pd.DataFrame) -> pd.DataFrame:
         # khung rỗng vẫn mang ĐỦ schema — tầng trên (UI/test) không phải
         # phòng thủ KeyError khi không có cảnh báo nào.
         return pd.DataFrame(columns=[
-            "session_date", "symbol", "group", "ts", "type", "direction",
+            "session_date", "symbol", "group", "ts", "type", "direction", "priority",
             "scale", "value", "signed_value", "mu", "sigma", "z", "pct",
             "bucket", "n_train"])
     return pd.DataFrame(alerts)

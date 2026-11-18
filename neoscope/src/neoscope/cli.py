@@ -5,16 +5,18 @@
     neoscope analyze    # LHS, cảnh báo, resilience
     neoscope validate   # walk-forward + benchmark + bootstrap + summary.json
     neoscope all        # synth → process → analyze → validate
-    neoscope record     # LIVE: ghi WebSocket NEO API (cần .env + IP đăng ký)
-    neoscope snapshot   # LIVE: chụp REST /stock/stockDetail vào RAW
+    neoscope record     # LIVE: ghi SSI (mặc định) hoặc NEO dự phòng theo NEOSCOPE_PROVIDER
+    neoscope snapshot   # LIVE NEO: lấy stock-detail snapshot REST
     neoscope app        # mở dashboard Streamlit
 """
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 
 import numpy as np
@@ -23,6 +25,15 @@ from loguru import logger
 
 from .config import REPO_ROOT, load_settings
 from .data.store import list_session_dirs, write_parquet
+
+
+def _new_live_capture_dir(settings, now=None) -> Path:
+    """Unique same-day capture directory; retries never append to prior RAW."""
+    from datetime import datetime
+    from .constants import VN_TZ
+    now = now or datetime.now(VN_TZ)
+    stamp = now.strftime("%Y-%m-%d_%H%M%S")
+    return settings.data_path("raw", f"{settings.dataset_mode}_{stamp}_{uuid.uuid4().hex[:8]}")
 
 
 def cmd_synth(args) -> None:
@@ -160,49 +171,50 @@ def cmd_all(args) -> None:
 
 def cmd_record(args) -> None:
     import asyncio
-    from datetime import datetime
-    from .constants import VN_TZ
-    from .neo_api.ws import NeoMarketWS
     settings = load_settings(args.config)
     if settings.mode != "LIVE":
         raise RuntimeError("Đặt NEOSCOPE_MODE=LIVE trong .env để ghi dữ liệu thật.")
-    ds = datetime.now(VN_TZ).strftime("%Y-%m-%d")
-    session_dir = settings.data_path("raw", f"LIVE_{ds}")
-    ws = NeoMarketWS(settings, session_dir)
-    asyncio.run(ws.run())
+    session_dir = _new_live_capture_dir(settings)
+    if settings.provider == "NEO":
+        from .neo_api.ws import NeoMarketWS
+        asyncio.run(NeoMarketWS(settings, session_dir).run())
+    else:
+        from .ssi_api.ws import SsiMarketWS
+        SsiMarketWS(settings, session_dir).run()
 
 
 def cmd_snapshot(args) -> None:
-    from .neo_api.rest import NeoRestClient
     from .data.store import RawWriter
-    from datetime import datetime
-    from .constants import VN_TZ
+    from .neo_api.rest import NeoRestClient
     settings = load_settings(args.config)
-    if settings.mode != "LIVE":
-        raise RuntimeError("Đặt NEOSCOPE_MODE=LIVE trong .env để gọi API thật.")
+    if settings.mode != "LIVE" or settings.provider != "NEO":
+        raise RuntimeError("`neoscope snapshot` chỉ dùng với provider NEO; SSI depth được ghi qua `neoscope record`.")
     client = NeoRestClient(settings)
-    body = client.stock_detail(symbols=settings.watchlist())
-    ds = datetime.now(VN_TZ).strftime("%Y-%m-%d")
-    session_dir = settings.data_path("raw", f"LIVE_{ds}")
-    writer = RawWriter(session_dir, "LIVE", meta={"source": "REST /stock/stockDetail",
-                                                 "config_hash": settings.config_hash})
-    data = body.get("data", body)
-    items = data if isinstance(data, list) else data.get("content", data.get("list", []))
-    for item in items:
-        writer.write("stockInfo", item)
-    writer.close()
-    logger.info("REST snapshot: {} mã | tuân thủ: {}", len(items), client.compliance_report())
-    client.close()
+    try:
+        body = client.stock_detail(symbols=settings.watchlist())
+        session_dir = _new_live_capture_dir(settings)
+        writer = RawWriter(session_dir, "LIVE", meta={
+            "provider": "VPBankS NEO API", "source": "REST /stock/stockDetail",
+            "config_hash": settings.config_hash,
+        })
+        data = body.get("data", body)
+        items = data if isinstance(data, list) else data.get("content", data.get("list", []))
+        for item in items:
+            writer.write("stockInfo", item)
+        writer.close()
+        logger.info("NEO REST snapshot: {} symbols | {}", len(items), client.compliance_report())
+    finally:
+        client.close()
 
 
 def cmd_app(args) -> None:
     app_path = Path(__file__).parent / "app" / "main.py"
     cmd = [sys.executable, "-m", "streamlit", "run", str(app_path),
-           "--server.address", "0.0.0.0", "--server.port", str(args.port),
+           "--server.address", "127.0.0.1", "--server.port", str(args.port),
            "--server.headless", "true", "--browser.gatherUsageStats", "false",
-           # Cho phép chạy sau reverse-proxy/sandbox preview (không ảnh hưởng
-           # bảo mật dữ liệu: app chỉ ĐỌC dữ liệu thị trường, không nhận lệnh).
-           "--server.enableCORS", "false", "--server.enableXsrfProtection", "false"]
+           # Bind localhost and retain Streamlit's CORS/XSRF defaults. Remote
+           # publication requires a separately reviewed authenticated proxy.
+           ]
     subprocess.run(cmd, cwd=REPO_ROOT, check=False)
 
 
@@ -210,6 +222,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="neoscope", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--config", default=None, help="đường dẫn settings.yaml thay thế")
+    parser.add_argument("--mode", choices=("SYNTHETIC", "LIVE"), default=None,
+                        help="ghi đè chế độ cấu hình cho lệnh này (ví dụ SYNTHETIC để demo offline)")
     sub = parser.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("synth", help="sinh dữ liệu mô phỏng (SYNTHETIC)")
     p.add_argument("--sessions", type=int, default=None)
@@ -225,14 +239,16 @@ def main() -> None:
     p.add_argument("--sessions", type=int, default=None)
     p.add_argument("--force", action="store_true")
     p.set_defaults(fn=cmd_all)
-    p = sub.add_parser("record", help="LIVE: ghi WebSocket")
+    p = sub.add_parser("record", help="LIVE: ghi provider đang chọn (SSI mặc định, NEO dự phòng)")
     p.set_defaults(fn=cmd_record)
-    p = sub.add_parser("snapshot", help="LIVE: chụp REST stockDetail")
+    p = sub.add_parser("snapshot", help="LIVE NEO: ghi snapshot cổ phiếu qua REST")
     p.set_defaults(fn=cmd_snapshot)
     p = sub.add_parser("app", help="mở dashboard")
     p.add_argument("--port", type=int, default=8501)
     p.set_defaults(fn=cmd_app)
     args = parser.parse_args()
+    if args.mode is not None:
+        os.environ["NEOSCOPE_MODE"] = args.mode
     args.fn(args)
 
 

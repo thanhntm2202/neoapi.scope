@@ -1,8 +1,8 @@
 """REST client NEO API — CHỈ DỮ LIỆU THỊ TRƯỜNG.
 
 An toàn theo thiết kế (safety by construction): module này KHÔNG có hàm
-đặt/sửa/hủy lệnh. Kiểm chứng bằng:
-    grep -ri "placeOrder\|amendOrder\|cancelOrder\|/order" src/neoscope/neo_api/
+đặt/sửa/hủy lệnh. Kiểm chứng bằng cách tìm các chuỗi `placeOrder`,
+`amendOrder`, `cancelOrder`, `/order` trong `src/neoscope/neo_api/`
 (kết quả mong đợi: không khớp).
 
 Tuân thủ: token-bucket 5 RPS; retry/backoff với 429/5xx; header đúng docs
@@ -11,6 +11,7 @@ Tuân thủ: token-bucket 5 RPS; retry/backoff với 429/5xx; header đúng docs
 from __future__ import annotations
 
 import os
+import platform
 import uuid
 from typing import Any
 
@@ -33,7 +34,7 @@ class NeoRestClient:
     @staticmethod
     def _stable_device_id() -> str:
         """UUID ổn định suy từ tên máy (không phải thông tin nhạy cảm)."""
-        return str(uuid.uuid5(uuid.NAMESPACE_DNS, os.uname().nodename))
+        return str(uuid.uuid5(uuid.NAMESPACE_DNS, platform.node() or os.getenv("COMPUTERNAME", "neoscope")))
 
     def _headers(self) -> dict[str, str]:
         return {

@@ -1,9 +1,9 @@
 """Cờ chất lượng dữ liệu (quality flags).
 
 Mỗi bản ghi chuẩn hóa mang theo danh sách cờ; dashboard có tab đếm cờ theo
-phiên. Các cờ tương ứng với những tình huống ĐÃ XÁC NHẬN trong payload mẫu
-chính thức của NEO API (bidPrice1 dạng chuỗi/ATO, totalBidQTTY null, bộ đếm
-lũy kế...) — xem docs/data_dictionary.md.
+phiên. Các cờ tương ứng với những tình huống dữ liệu thực (giá chuỗi/ATO,
+trường độ sâu null, bộ đếm lũy kế...). Xem docs/provider_contracts.md,
+docs/ssi_fastconnect.md và docs/limitations.md để biết diễn giải theo nguồn.
 """
 from __future__ import annotations
 

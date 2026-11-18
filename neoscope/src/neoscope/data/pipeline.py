@@ -38,8 +38,8 @@ def process_session(settings: Settings, session_dir: Path, force: bool = False) 
         stale_gap_s=float(settings.quality.stale_gap_s),
         dedup_window=int(settings.quality.dedup_window),
     )
-    # --- sắp xếp theo THỜI ĐIỂM SỰ KIỆN (arrival_ts) trước khi tính delta ---
-    # Bộ đếm lũy kế phải được hiệu theo thứ tự thời gian, không theo thứ tự
+    # --- sắp xếp theo thời điểm NHẬN trước khi tính delta ---
+    # Bộ đếm lũy kế phải được hiệu theo thứ tự message nhận, không theo thứ tự
     # ghi nhận: thông điệp đến sai thứ tự (arrival_ts lùi) nếu xử nguyên trạng
     # sẽ tạo reset giả (delta NaN) và nhịp sau bị dồn gấp đôi. Ta gắn cờ
     # OUT_OF_ORDER ở tầng RAW (so với max arrival_ts đã thấy theo seq) rồi
@@ -140,10 +140,10 @@ def build_bars(snaps: pd.DataFrame, settings: Settings) -> pd.DataFrame:
 
 
 def process_all(settings: Settings, force: bool = False) -> list[Path]:
-    dirs = list_session_dirs(settings.data_path(), mode=settings.mode)
+    dirs = list_session_dirs(settings.data_path(), mode=settings.dataset_mode)
     if not dirs:
         raise RuntimeError(
-            f"Không có phiên RAW nào ở chế độ {settings.mode}. "
+            f"Không có phiên RAW nào ở chế độ {settings.mode} / nguồn {settings.provider}. "
             "Chạy `neoscope synth` (mô phỏng) hoặc `neoscope record` (LIVE) trước."
         )
     return [process_session(settings, d, force=force) for d in dirs]
@@ -151,7 +151,7 @@ def process_all(settings: Settings, force: bool = False) -> list[Path]:
 
 def load_curated(settings: Settings) -> dict[str, pd.DataFrame]:
     """Nạp toàn bộ curated của chế độ hiện tại, ghép theo phiên."""
-    dirs = sorted(curated_dir_for(settings, d) for d in list_session_dirs(settings.data_path(), settings.mode))
+    dirs = sorted(curated_dir_for(settings, d) for d in list_session_dirs(settings.data_path(), settings.dataset_mode))
     frames: dict[str, list[pd.DataFrame]] = {"snapshots": [], "bars": [], "indices": [], "quality": [], "quality_meta": []}
     for d in dirs:
         for key in frames:

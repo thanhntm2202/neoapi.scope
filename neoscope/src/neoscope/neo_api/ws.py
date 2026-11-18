@@ -1,4 +1,4 @@
-"""WebSocket client NEO API — luồng thị trường thời gian thực, ghi RAW bất biến.
+"""WebSocket client NEO API — luồng thị trường thời gian thực, ghi RAW append-only.
 
 Giao thức đúng docs (overview + 6.2 market-stream):
 1. Kết nối ws://neoapi.vpbanks.com.vn/stock-stream/broker
@@ -8,7 +8,7 @@ Giao thức đúng docs (overview + 6.2 market-stream):
 
 Độ bền: watchdog (không thấy thông điệp trong phiên quá ngưỡng → tái kết nối),
 backoff hàm mũ, tự resubscribe, làm mới JWT khi auth lỗi. Ghi heartbeat
-ra data/live_status.json để dashboard hiển thị trạng thái kết nối.
+ra data/live_status_neo.json để dashboard hiển thị trạng thái kết nối.
 """
 from __future__ import annotations
 
@@ -34,11 +34,15 @@ class NeoMarketWS:
     def __init__(self, settings: Settings, session_dir: Path):
         self.cfg = settings
         self.tokens = TokenManager(settings)
+        self._capture_date = datetime.now(VN_TZ).date()
+        self._stop_detail = ""
         self.writer = RawWriter(session_dir, "LIVE", meta={
+            "provider": "VPBankS NEO API",
+            "source": "NEO market-data stream",
             "session_date": datetime.now(VN_TZ).strftime("%Y-%m-%d"),
             "config_hash": settings.config_hash,
         })
-        self.status_path = settings.data_path("live_status.json")
+        self.status_path = settings.data_path("live_status_neo.json")
         self._stop = asyncio.Event()
         self._last_msg_mono: float = 0.0
         self._msg_count = 0
@@ -55,12 +59,16 @@ class NeoMarketWS:
 
     def _write_status(self, state: str, detail: str = "") -> None:
         self.status_path.parent.mkdir(parents=True, exist_ok=True)
-        self.status_path.write_text(json.dumps({
+        status = json.dumps({
             "state": state, "detail": detail,
             "updated_at": datetime.now(VN_TZ).isoformat(),
             "messages": self._msg_count,
             "mode": "LIVE",
-        }, ensure_ascii=False), encoding="utf-8")
+            "provider": "NEO",
+        }, ensure_ascii=False)
+        tmp = self.status_path.with_suffix(self.status_path.suffix + ".tmp")
+        tmp.write_text(status, encoding="utf-8")
+        tmp.replace(self.status_path)
 
     async def _run_once(self) -> None:
         url = str(self.cfg.neo_api.ws_url)
@@ -84,11 +92,19 @@ class NeoMarketWS:
                 try:
                     raw = await asyncio.wait_for(ws.recv(), timeout=5.0)
                 except asyncio.TimeoutError:
+                    if datetime.now(VN_TZ).date() != self._capture_date:
+                        self._stop_detail = "Capture stopped at Vietnam calendar-day boundary; restart for the next date."
+                        self._stop.set()
+                        break
                     in_session = session_of_time(datetime.now(VN_TZ).time()) in CONTINUOUS
                     if in_session and loop.time() - self._last_msg_mono > watchdog_s:
                         raise ConnectionError(f"Watchdog: không có thông điệp >{watchdog_s:.0f}s trong phiên")
                     continue
                 self._last_msg_mono = loop.time()
+                if datetime.now(VN_TZ).date() != self._capture_date:
+                    self._stop_detail = "Capture stopped at Vietnam calendar-day boundary; restart for the next date."
+                    self._stop.set()
+                    break
                 msg = json.loads(raw)
                 # phòng thủ: một số phiên bản server bọc payload trong {"channel":..., "data":{...}}
                 payload = msg.get("data") if isinstance(msg.get("data"), dict) else msg
@@ -146,5 +162,5 @@ class NeoMarketWS:
                     pass
                 backoff = min(backoff * 2, 60.0)
         self.writer.close()
-        self._write_status("stopped")
+        self._write_status("stopped", self._stop_detail)
         logger.info("NEO WS: dừng ghi, {} thông điệp", self._msg_count)

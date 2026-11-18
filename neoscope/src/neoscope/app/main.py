@@ -1,9 +1,9 @@
-"""NeoScope Dashboard — Kính hiển vi sổ lệnh & Buồng thử khớp lệnh (NEO API).
+"""NeoScope — thanh khoản, chi phí thực thi và cảnh báo thị trường.
 
 Chạy:  neoscope app   (hoặc: streamlit run src/neoscope/app/main.py)
 
-Mỗi tab trả lời MỘT câu hỏi quyết định; tab Kiểm chứng công khai cả điểm
-yếu của mô hình. Chế độ SYNTHETIC luôn treo banner công bố dữ liệu mô phỏng.
+Mỗi trang trả lời một câu hỏi quyết định. Chế độ SYNTHETIC luôn công bố rõ
+rằng dữ liệu là mô phỏng và không phải bằng chứng thị trường.
 """
 from __future__ import annotations
 
@@ -19,6 +19,7 @@ if __package__ in (None, ""):
         sys.path.insert(0, _SRC)
 
 import streamlit as st
+import pandas as pd
 
 from neoscope.app.data import (freshness, load_bars, load_indices, load_quality,
                                load_result, load_snaps, load_summary,
@@ -26,107 +27,176 @@ from neoscope.app.data import (freshness, load_bars, load_indices, load_quality,
 from neoscope.app.views import (view_alerts, view_data, view_execution, view_lhs,
                                 view_method, view_overview, view_validation)
 
-st.set_page_config(page_title="NeoScope — NEO API Liquidity Lab", page_icon="🔬",
+st.set_page_config(page_title="NeoScope | Phân tích thanh khoản", page_icon=":material/analytics:",
                    layout="wide", initial_sidebar_state="expanded")
 
-st.markdown("""
-<style>
-  .block-container {padding-top: 2.2rem; padding-bottom: 2rem; max-width: 1280px;}
-  div[data-testid="stMetric"] {background: #f8fafc; border: 1px solid #e2e8f0;
-      border-radius: 10px; padding: 10px 14px;}
-  div[data-testid="stMetricLabel"] {font-size: 0.82rem;}
-  .neo-banner {background: linear-gradient(90deg,#0f766e,#134e4a); color: #fff;
-      padding: 14px 18px; border-radius: 12px; margin-bottom: 10px;}
-  .neo-banner h1 {margin: 0; font-size: 1.5rem; color: #fff;}
-  .neo-banner p {margin: 4px 0 0; font-size: 0.9rem; opacity: 0.92;}
-  .neo-synth {background: #fef3c7; border: 1px solid #f59e0b; color: #92400e;
-      padding: 8px 14px; border-radius: 10px; font-size: 0.9rem; margin-bottom: 8px;}
-  .neo-live {background: #dcfce7; border: 1px solid #16a34a; color: #14532d;
-      padding: 8px 14px; border-radius: 10px; font-size: 0.9rem; margin-bottom: 8px;}
-  footer {visibility: hidden;}
-</style>
-""", unsafe_allow_html=True)
+LOAD_WARNINGS: list[str] = []
+
+
+def _load_optional(label: str, loader, *args, default):
+    try:
+        return loader(*args)
+    except Exception as exc:  # A corrupt optional artifact must not blank the whole dashboard.
+        LOAD_WARNINGS.append(f"Không nạp được {label}: {type(exc).__name__}: {exc}")
+        return default
 
 s = settings()
 mode = s.mode
+data_mode = s.dataset_mode
 chash = s.config_hash
 
-snaps = load_snaps(mode, chash)
+try:
+    snaps = load_snaps(data_mode, chash)
+except Exception as exc:
+    st.error(f"Không đọc được dữ liệu curated: {type(exc).__name__}: {exc}")
+    st.info("Kiểm tra tệp Parquet và chạy lại `neoscope --mode SYNTHETIC process --force` "
+            "hoặc `process` cho namespace LIVE.")
+    st.stop()
 if snaps.empty:
-    st.error("Chưa có dữ liệu curated cho chế độ " + mode +
-             ". Chạy `neoscope all` (SYNTHETIC) hoặc `neoscope record` + `neoscope process` (LIVE).")
+    st.error(f"Chưa có dữ liệu curated cho chế độ {mode} / nguồn {s.provider}. "
+             "Chạy `neoscope all` (SYNTHETIC) hoặc chọn provider, rồi `neoscope record` + `neoscope process` (LIVE).")
     st.stop()
 
 sessions = sessions_of(snaps)
-summary = load_summary(chash)
 
+ctx: dict = {}
+
+
+def _overview_page() -> None:
+    view_overview(ctx)
+
+
+def _liquidity_page() -> None:
+    view_lhs(ctx)
+
+
+def _execution_page() -> None:
+    view_execution(ctx)
+
+
+def _alerts_page() -> None:
+    view_alerts(ctx)
+
+
+def _validation_page() -> None:
+    view_validation(ctx)
+
+
+def _data_page() -> None:
+    view_data(ctx)
+
+
+def _method_page() -> None:
+    view_method(ctx)
+
+
+page = st.navigation(
+    {
+        "Phân tích": [
+            st.Page(_overview_page, title="Tổng quan", url_path="overview", icon=":material/dashboard:",
+                    help="Tóm tắt dữ liệu phiên, độ rộng thị trường và watchlist đã chọn."),
+            st.Page(_liquidity_page, title="Thanh khoản", url_path="liquidity", icon=":material/waterfall_chart:",
+                    help="So sánh điểm LHS, các cấu phần thanh khoản và diễn biến trong phiên."),
+            st.Page(_execution_page, title="Mô phỏng chi phí", url_path="execution-cost", icon=":material/candlestick_chart:",
+                    help="Ước tính impact, phí và thuế cho lệnh giả định; không gửi lệnh thật."),
+            st.Page(_alerts_page, title="Cảnh báo", url_path="alerts", icon=":material/notifications_active:",
+                    help="Lọc và truy nguyên bất thường theo mã, phiên, loại và mức ưu tiên."),
+            st.Page(_validation_page, title="Kiểm chứng", url_path="validation", icon=":material/fact_check:",
+                    help="Đánh giá ngoài mẫu, benchmark, độ phủ và độ bất định của mô hình."),
+        ],
+        "Quản trị nghiên cứu": [
+            st.Page(_data_page, title="Dữ liệu & chất lượng", url_path="data-quality", icon=":material/database:",
+                    help="Kiểm tra nguồn, độ mới, chất lượng bản ghi và manifest truy vết."),
+            st.Page(_method_page, title="Phương pháp & giới hạn", url_path="methodology", icon=":material/menu_book:",
+                    help="Tra cứu công thức, ngưỡng, giao thức kiểm chứng và các giới hạn."),
+        ],
+    },
+    position="sidebar",
+)
+
+live_status: dict = {}
 with st.sidebar:
-    st.markdown("### 🔬 NeoScope")
-    st.caption("Kính hiển vi sổ lệnh & buồng thử khớp lệnh trên NEO API (VPBankS)")
+    st.markdown("#### Bộ lọc dữ liệu")
     session = st.selectbox("Phiên giao dịch", sessions, index=len(sessions) - 1)
     all_syms = sorted(snaps["symbol"].unique().tolist())
     symbols = st.multiselect("Mã theo dõi", all_syms,
                              default=[x for x in s.watchlist() if x in all_syms] or all_syms)
-    st.divider()
-    st.markdown(f"**Chế độ:** `{mode}`")
-    st.markdown(f"**Cập nhật dữ liệu:** {freshness(snaps)}")
-    st.markdown(f"**Múi giờ hiển thị:** Asia/Ho_Chi_Minh (UTC+7)")
-    st.markdown(f"**config_hash:** `{chash}`")
+    with st.expander("Trạng thái kết nối & tái lập"):
+        st.caption(f"Múi giờ: Asia/Ho_Chi_Minh · config_hash: `{chash}`")
     if mode == "LIVE":
         import json as _json
-        p = s.data_path("live_status.json")
+        p = s.data_path(f"live_status_{s.provider.lower()}.json")
         if p.exists():
-            stt = _json.loads(p.read_text(encoding="utf-8"))
-            st.markdown(f"**Kết nối WS:** `{stt.get('state')}` · {stt.get('messages', 0):,} msg")
-    st.divider()
-    st.caption("⚖️ Công cụ phân tích học thuật — KHÔNG phải khuyến nghị đầu tư, "
-               "KHÔNG đặt lệnh thật. Dữ liệu thị trường only.")
+            try:
+                stt = _json.loads(p.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                st.warning("Không đọc được trạng thái recorder; hãy kiểm tra tiến trình ghi dữ liệu.")
+            else:
+                live_status = stt
+                ws_state = str(stt.get("state", "unknown")).lower()
+                status_line = (f"WebSocket `{ws_state}` · {stt.get('messages', 0):,} messages · "
+                               f"queue {stt.get('queue_depth', 0):,} · lỗi callback "
+                               f"{stt.get('callback_errors', 0)}")
+                if ws_state == "failed":
+                    st.error(status_line)
+                elif ws_state == "stale":
+                    st.warning(status_line)
+                elif ws_state == "connected":
+                    st.success(status_line)
+                else:
+                    st.info(status_line)
+                if stt.get("detail"):
+                    st.caption(stt["detail"])
+        else:
+            st.warning("Chưa có trạng thái recorder. Khởi chạy `neoscope record` để bắt đầu capture.")
+    if st.button("Làm mới dữ liệu", icon=":material/refresh:", width="stretch"):
+        st.cache_data.clear()
+        st.rerun()
 
-st.markdown(
-    '<div class="neo-banner"><h1>🔬 NeoScope — Order-book Liquidity X-ray &amp; Execution-cost Laboratory</h1>'
-    '<p>Biến sổ lệnh 3 mức + luồng khớp lệnh NEO API thành: điểm sức khỏe thanh khoản · ước tính chi phí thực thi trước khi đặt lệnh · '
-    'cảnh báo bất thường truy nguyên được · và tự kiểm chứng công khai. Người dùng: NĐT cá nhân 100tr–5tỷ/lệnh, môi giới, người học vi cấu trúc.</p></div>',
-    unsafe_allow_html=True)
+st.title("NeoScope")
+st.caption("Công cụ nghiên cứu cho nhà đầu tư, môi giới và nhà phân tích: đo thanh khoản, "
+           "ước tính chi phí lệnh giả định và truy nguyên cảnh báo.")
+with st.container(horizontal=True, gap="medium"):
+    if mode == "SYNTHETIC":
+        st.badge("DỮ LIỆU MÔ PHỎNG", icon=":material/science:", color="orange")
+    else:
+        ws_state = str(live_status.get("state", "not started")).lower()
+        ws_color = {"connected": "green", "stale": "orange", "failed": "red"}.get(ws_state, "gray")
+        st.badge(f"WebSocket · {ws_state}", icon=":material/cable:", color=ws_color)
+    st.badge(f"Nguồn · {s.provider}", icon=":material/database:", color="blue")
+    st.badge(f"Phiên · {session}", icon=":material/calendar_today:", color="gray")
+    st.badge(f"Cập nhật · {freshness(snaps)} · UTC+7", icon=":material/schedule:", color="gray")
 if mode == "SYNTHETIC":
-    st.markdown('<div class="neo-synth">⚠️ <b>CHẾ ĐỘ SYNTHETIC</b> — toàn bộ dữ liệu là MÔ PHỎNG có gắn nhãn '
-                '(seed & generator_version trong manifest), không phải thị trường thật. '
-                'Kết quả kiểm chứng phản ánh thế giới mô phỏng; chuyển LIVE khi có quyền NEO API + IP đăng ký.</div>',
-                unsafe_allow_html=True)
+    st.warning("**DỮ LIỆU MÔ PHỎNG** · Kết quả chỉ kiểm chứng cơ chế trên bộ sinh synthetic, "
+               "không đại diện cho thị trường thật. Seed và phiên bản generator có trong manifest.",
+               icon=":material/science:")
 else:
-    st.markdown('<div class="neo-live">📡 <b>CHẾ ĐỘ LIVE</b> — dữ liệu thị trường thật từ NEO API (JWT, 5 RPS, IP đã đăng ký). '
-                'Không gọi bất kỳ endpoint đặt lệnh nào.</div>', unsafe_allow_html=True)
+    st.info(f"**DỮ LIỆU LIVE · {s.provider}** · Dữ liệu và kết quả được tách theo nguồn. "
+            "Ứng dụng không gọi endpoint đặt lệnh.", icon=":material/candlestick_chart:")
 
-bars = load_bars(mode, chash)
-bars_lhs = load_result("bars_lhs.parquet", chash)
-indices = load_indices(mode, chash)
-quality, quality_meta = load_quality(mode, chash)
+bars = _load_optional("bars", load_bars, data_mode, chash, default=pd.DataFrame())
+bars_lhs = _load_optional("LHS", load_result, "bars_lhs.parquet", chash, default=pd.DataFrame())
+indices = _load_optional("indices", load_indices, data_mode, chash, default=pd.DataFrame())
+quality, quality_meta = _load_optional("quality", load_quality, data_mode, chash,
+                                       default=(pd.DataFrame(), pd.DataFrame()))
 # Khóa của `results` là TÊN LOGIC (không có đuôi .parquet) — đúng như các
 # view tra cứu (`results["alerts"]`, `results["metrics"]`…). Lệch khóa từng
 # khiến mọi tab kiểm chứng/cảnh báo im lặng rơi về DataFrame rỗng.
 RESULT_FILES = ("metrics", "metrics_coverage", "predictions", "orders",
                 "fold_params", "coverage", "alerts", "alert_pr",
                 "lhs_ic", "lhs_sensitivity", "obi_direction", "resilience")
-results = {name: load_result(f"{name}.parquet", chash) for name in RESULT_FILES}
-ctx = {"settings": s, "mode": mode, "snaps": snaps, "bars": bars, "bars_lhs": bars_lhs,
+results = {name: _load_optional(name, load_result, f"{name}.parquet", chash,
+                                default=pd.DataFrame()) for name in RESULT_FILES}
+summary = _load_optional("summary", load_summary, chash, default={})
+manifests = _load_optional("session manifests", session_manifests, data_mode, chash,
+                           default=[])
+ctx.update({"settings": s, "mode": mode, "snaps": snaps, "bars": bars, "bars_lhs": bars_lhs,
        "indices": indices, "quality": quality, "quality_meta": quality_meta,
        "summary": summary, "results": results, "session": session,
        "sessions": sessions, "symbols": symbols,
-       "manifests": session_manifests(mode, chash)}
+        "manifests": manifests})
 
-tabs = st.tabs(["🏠 Tổng quan", "Q1 · Sức khỏe thanh khoản", "Q2 · Ước tính thực thi",
-                "Q3 · Cảnh báo bất thường", "Q4 · Kiểm chứng", "🗄 Dữ liệu & Chất lượng",
-                "📐 Phương pháp & Giới hạn"])
-with tabs[0]:
-    view_overview(ctx)
-with tabs[1]:
-    view_lhs(ctx)
-with tabs[2]:
-    view_execution(ctx)
-with tabs[3]:
-    view_alerts(ctx)
-with tabs[4]:
-    view_validation(ctx)
-with tabs[5]:
-    view_data(ctx)
-with tabs[6]:
-    view_method(ctx)
+for load_warning in LOAD_WARNINGS:
+    st.warning(load_warning)
+
+page.run()

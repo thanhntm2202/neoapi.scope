@@ -96,4 +96,4 @@ def test_lhs_insufficient_symbols_still_bounded(settings):
     one = bars[bars["symbol"] == "HPG"]
     out = compute_lhs(one, settings).dropna(subset=["lhs"])
     # một mã duy nhất: mọi hạng = 1.0 → LHS = 100 (đúng định nghĩa, không crash)
-    assert (out["lhs"] == pytest.approx(100.0)).all()
+    assert np.allclose(out["lhs"].to_numpy(dtype=float), 100.0)

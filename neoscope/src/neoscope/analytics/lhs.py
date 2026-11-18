@@ -11,7 +11,8 @@ Cấu phần (cửa sổ trượt 15 phút, đo trên bar 1 phút):
 
 Vì sao percentile thay vì ngưỡng thô: (1) không có 'con số ma thuật';
 (2) bền vững với outlier và khác biệt thang đo giữa các mã; (3) diễn giải
-được: 'mã này chặt hơn 80% watchlist tại cùng thời điểm'. Kiểm tra độ nhạy:
+được theo đóng góp percentile từng cấu phần. Điểm tổng hợp không phải percentile
+của LHS. Kiểm tra độ nhạy:
 nhân đôi lần lượt từng trọng số → tương quan thứ hạng Spearman với LHS gốc
 (báo cáo trong tab Kiểm chứng). Giá trị xây dựng (construct validity) được
 kiểm chứng bằng tương quan thứ hạng với ILLIQ tương lai — validation.py.

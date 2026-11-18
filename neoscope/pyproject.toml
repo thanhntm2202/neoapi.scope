@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "neoscope"
-version = "1.2.0"
-description = "NeoScope — Order-book liquidity X-ray & execution-cost laboratory on VPBankS NEO API (academic prototype, no real orders)."
+version = "2.0.0"
+description = "NeoScope — Order-book liquidity X-ray and execution-cost research lab using SSI FastConnect API v3 market data."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
@@ -23,6 +23,7 @@ dependencies = [
     "loguru>=0.7",
     "python-dotenv>=1.0",
     "PyYAML>=6.0",
+    "ssi-sdk==3.3.2",
 ]
 
 [project.optional-dependencies]

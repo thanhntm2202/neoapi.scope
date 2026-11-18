@@ -11,11 +11,11 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-C_LARGE = "#2563eb"
-C_THIN = "#f59e0b"
+C_LARGE = "#1d4ed8"
+C_THIN = "#b45309"
 C_ACCENT = "#0f766e"
-C_BAD = "#dc2626"
-C_GOOD = "#16a34a"
+C_BAD = "#b91c1c"
+C_GOOD = "#15803d"
 GROUP_COLORS = {"large": C_LARGE, "thin": C_THIN}
 MODEL_COLORS = {"naive_mid": "#94a3b8", "ladder_only": "#f59e0b", "full": "#0f766e"}
 
@@ -24,11 +24,15 @@ def _base(fig: go.Figure, height: int = 360, title: str | None = None) -> go.Fig
     fig.update_layout(
         template="plotly_white", height=height,
         margin=dict(l=10, r=10, t=48 if title else 24, b=10),
-        font=dict(family="system-ui, sans-serif", size=13),
-        title=dict(text=title, font=dict(size=15)) if title else None,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
-        hoverlabel=dict(font_size=12),
+        paper_bgcolor="#ffffff", plot_bgcolor="#ffffff",
+        font=dict(family="Inter, Segoe UI, sans-serif", size=13, color="#25364a"),
+        title=dict(text=title, font=dict(size=15, color="#172b4d")) if title else None,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0,
+                    font=dict(size=11), bgcolor="rgba(255,255,255,0.8)"),
+        hoverlabel=dict(font_size=12, bgcolor="#172b4d", font_color="#ffffff"),
     )
+    fig.update_xaxes(gridcolor="#edf2f7", zerolinecolor="#d8e1ea", linecolor="#d8e1ea")
+    fig.update_yaxes(gridcolor="#edf2f7", zerolinecolor="#d8e1ea", linecolor="#d8e1ea")
     return fig
 
 
@@ -242,7 +246,7 @@ def breadth(indices_day: pd.DataFrame) -> go.Figure:
     fig.update_yaxes(title="Số mã (watchlist quy mô hóa)", secondary_y=False)
     fig.update_yaxes(title="Điểm chỉ số", secondary_y=True)
     fig.update_xaxes(title="Giờ (UTC+7)")
-    return _base(fig, 340, "Độ rộng thị trường trong phiên (marketInfo — NEO API)")
+    return _base(fig, 340, "Độ rộng thị trường trong phiên")
 
 
 def fold_params_fig(fp: pd.DataFrame) -> go.Figure:

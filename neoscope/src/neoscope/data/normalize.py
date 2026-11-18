@@ -1,4 +1,4 @@
-"""Chuẩn hóa thông điệp NEO API → bản ghi typed + cờ chất lượng + delta.
+"""Chuẩn hóa canonical market data → typed records, quality flags, and deltas.
 
 Xử lý mọi "bẫy" đã xác nhận trong docs chính thức:
 - bidPrice1/askPrice1 là CHUỖI, có thể là "ATO"/"ATC";
@@ -8,9 +8,8 @@ Xử lý mọi "bẫy" đã xác nhận trong docs chính thức:
 - timestamp không kèm múi giờ → chuẩn hóa Asia/Ho_Chi_Minh;
 - thông điệp lặp / đến muộn / sai thứ tự / thiếu trường.
 
-Thời điểm sự kiện: payload stockInfo KHÔNG có trường thời gian riêng,
-nên dùng arrival_ts làm xấp xỉ thời điểm sự kiện (công bố trong từ điển
-dữ liệu — sai số cỡ độ trễ mạng, chấp nhận được ở tần suất 5s).
+Thời điểm sự kiện: dùng event_ts do adapter SSI cung cấp khi có; nếu không,
+dùng arrival_ts làm xấp xỉ và giữ cờ chất lượng khi thời gian nguồn sai định dạng.
 
 Bộ đếm lũy kế được hiệu trên TRẠNG THÁI ĐƠN ĐIỆU (max đã thấy) sau khi
 sắp xếp bản ghi theo arrival_ts: thông điệp mang bộ đếm cũ hơn state là
@@ -67,7 +66,7 @@ class StockNormalizer:
     """Chuẩn hóa luồng stockInfo theo thứ tự arrival, duy trì trạng thái theo mã.
 
     Trạng thái gồm: hash gần đây (khử lặp), bộ đếm lũy kế trước đó (delta),
-    arrival_ts trước đó (phát hiện sai thứ tự / khoảng trống).
+    event timestamp trước đó (phát hiện sai thứ tự / khoảng trống).
     """
 
     def __init__(self, stale_gap_s: float = 30.0, dedup_window: int = 5):
@@ -93,10 +92,8 @@ class StockNormalizer:
         """Delta trên trạng thái LŨY KẾ ĐƠN ĐIỆU (state = max đã thấy).
 
         Bộ đếm của sàn không giảm trong phiên. Nếu cur < state thì thông
-        điệp này mang trạng thái CŨ hơn một bản ghi đã thấy → bằng chứng
-        nó ĐẾN MUỘN so với thứ tự sự kiện (arrival_ts không phải thời điểm
-        sự kiện thật). Xử lý trung thực: gắn cờ LATE_ARRIVAL, delta = NaN
-        (không bịa nhịp âm/không), KHÔNG lùi state — phần khối lượng của
+        điệp mang trạng thái cũ hơn bản ghi xử lý trước. Xử lý trung thực:
+        gắn cờ LATE_ARRIVAL, delta = NaN (không bịa nhịp âm/không), KHÔNG lùi state — phần khối lượng của
         thông điệp muộn được hấp thụ vào delta kế tiếp (bảo toàn tổng).
         cur == 0 với state > 0 là chữ ký RESET thật (phiên mới/lỗi nguồn).
         Trả về (delta, is_reset).
@@ -129,7 +126,14 @@ class StockNormalizer:
         st = self._st(symbol)
         flags: list[str] = []
 
-        ts = datetime.fromisoformat(rec["arrival_ts"])
+        arrival_ts = datetime.fromisoformat(rec["arrival_ts"])
+        ts = arrival_ts
+        event_ts = payload.get("event_ts")
+        if event_ts:
+            try:
+                ts = datetime.fromisoformat(str(event_ts).replace("/", "-"))
+            except ValueError:
+                flags.append(QF.PARSE_FAIL)
         if ts.tzinfo is None:
             ts = ts.replace(tzinfo=VN_TZ)
         ts = ts.astimezone(VN_TZ)

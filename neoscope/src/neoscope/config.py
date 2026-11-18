@@ -1,4 +1,4 @@
-"""Nạp cấu hình: settings.yaml + biến môi trường (.env) cho bí mật.
+"""Load settings.yaml and environment variables for provider selection/secrets.
 
 Nguyên tắc bảo mật: bí mật (username/password/token) CHỈ đọc từ môi trường,
 không bao giờ nằm trong YAML hay được ghi vào log/parquet.
@@ -54,10 +54,23 @@ class Settings:
         return REPO_ROOT / self._data["paths"]["data_dir"] / Path(*parts)
 
     def results_path(self, *parts: str) -> Path:
-        return REPO_ROOT / self._data["paths"]["results_dir"] / Path(*parts)
+        base = REPO_ROOT / self._data["paths"]["results_dir"]
+        if self.mode == "LIVE":
+            base = base / self.provider
+        return base / Path(*parts)
+
+    @property
+    def provider(self) -> str:
+        """Active live feed; NEO is an explicit backup and never auto-mixed with SSI."""
+        return "SYNTHETIC" if self.mode == "SYNTHETIC" else str(self._data["provider"])
+
+    @property
+    def dataset_mode(self) -> str:
+        """Directory selector isolating each live provider's sessions."""
+        return "SYNTHETIC" if self.mode == "SYNTHETIC" else f"LIVE_{self.provider}"
 
 
-def load_settings(path: str | Path | None = None) -> Settings:
+def load_settings(path: str | Path | None = None, provider: str | None = None) -> Settings:
     load_dotenv(REPO_ROOT / ".env", override=False)
     p = Path(path) if path else REPO_ROOT / "config" / "settings.yaml"
     with open(p, encoding="utf-8") as f:
@@ -65,7 +78,12 @@ def load_settings(path: str | Path | None = None) -> Settings:
     mode = os.environ.get("NEOSCOPE_MODE", data.get("mode", "SYNTHETIC")).upper()
     if mode not in {"SYNTHETIC", "LIVE"}:
         raise ValueError(f"NEOSCOPE_MODE không hợp lệ: {mode}")
+    active_provider = (provider or os.environ.get("NEOSCOPE_PROVIDER")
+                       or data.get("provider", "SSI")).upper()
+    if active_provider not in {"NEO", "SSI"}:
+        raise ValueError("NEOSCOPE_PROVIDER phải là NEO hoặc SSI")
     data["mode"] = mode
+    data["provider"] = active_provider if mode == "LIVE" else "SYNTHETIC"
     return Settings(data, p)
 
 

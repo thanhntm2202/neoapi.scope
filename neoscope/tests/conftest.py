@@ -60,7 +60,7 @@ def raw_rec(seq: int, ts: datetime, payload: dict, channel: str = "stockInfo") -
 def payload(symbol: str = "HPG", bid=(100.0, 99.0, 98.0), ask=(102.0, 103.0, 104.0),
             bvol=(1000, 2000, 3000), avol=(500, 500, 1000), cum_vol: int = 10_000,
             cum_val: int = 1_000_000_000, **extra) -> dict:
-    """Payload stockInfo đúng hình dạng NEO API (giá mức 1 là CHUỖI)."""
+    """Canonical stockInfo fixture (string book prices exercise safe parsing)."""
     p: dict = {
         "symbol": symbol, "refPrice": 100.0, "ceilingPrice": 107.0, "floorPrice": 93.0,
         "bidPrice1": f"{bid[0]:.1f}", "bidPrice2": bid[1], "bidPrice3": bid[2],

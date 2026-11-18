@@ -83,7 +83,15 @@ def session_bootstrap(preds: pd.DataFrame, model_a: str, model_b: str,
     rng = np.random.default_rng(seed)
     boots = np.array([vals[rng.integers(0, len(vals), len(vals))].mean() for _ in range(reps)])
     lo, hi = np.quantile(boots, [0.025, 0.975])
-    p_two = float(min(1.0, 2 * min((boots >= 0).mean(), (boots <= 0).mean())))
+    # The percentile bootstrap above estimates uncertainty in the mean effect;
+    # it is not a null distribution and must not be reused as a p-value. Use an
+    # exact two-sided sign test over independent session-level differences.
+    # This remains discrete and low-powered with few sessions, which is why n
+    # and the cluster bootstrap interval are reported beside it.
+    nonzero = vals[vals != 0]
+    p_two = (float(stats.binomtest(int((nonzero > 0).sum()), n=len(nonzero),
+                                   p=0.5, alternative="two-sided").pvalue)
+             if len(nonzero) else np.nan)
     return {"model_a": model_a, "model_b": model_b,
             "delta_mae_bps": float(vals.mean()), "ci95_lo": float(lo), "ci95_hi": float(hi),
             "p_two_sided": p_two, "n_sessions": len(vals),
@@ -184,7 +192,9 @@ def alert_precision_recall(alerts: pd.DataFrame, settings: Settings,
     Đây là kiểm chứng CƠ CHẾ cảnh báo, không phải hiệu quả ngoài đời thật.
     """
     truth = []
-    for d in list_session_dirs(settings.data_path(), settings.mode):
+    if settings.mode != "SYNTHETIC":
+        return pd.DataFrame()
+    for d in list_session_dirs(settings.data_path(), settings.dataset_mode):
         p = d / "events_truth.json"
         if p.exists():
             ev = json.loads(p.read_text(encoding="utf-8"))["events"]
@@ -231,6 +241,7 @@ def build_summary(settings: Settings, metrics: pd.DataFrame, boot_full_ladder: d
     test_dates = dates[int(settings.validation.min_train_sessions):]
     summary = {
         "mode": settings.mode,
+        "provider": settings.provider,
         "synthetic": settings.mode == "SYNTHETIC",
         "dataset": {
             "n_sessions": len(dates), "dates": dates,

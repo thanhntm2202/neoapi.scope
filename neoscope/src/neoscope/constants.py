@@ -45,7 +45,7 @@ SESSION_WINDOWS: dict[str, tuple[time, time]] = {
     "PT": (time(14, 45), time(15, 0)),
 }
 
-# Mã trạng thái phiên NEO API (marketSession): PRE, ATO, LO, ATC, PLO, PT, C
+# Mã phiên giao dịch canonical: PRE, ATO, LO, ATC, PLO, PT, C
 CONTINUOUS_SESSIONS = {"LO"}
 
 # Số nhịp 5s trong một phiên liên tục (135 phút sáng + 90 phút chiều = 225 phút)

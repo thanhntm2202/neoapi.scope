@@ -139,16 +139,31 @@ def generate_orders(
         s = lo[lo["symbol"] == sym].sort_values("ts")
         if s.empty:
             continue
-        t_min = s["ts"].min() + pd.Timedelta(minutes=3)
-        t_max = s["ts"].max() - pd.Timedelta(seconds=horizon_s + 30)
-        span = (t_max - t_min).total_seconds()
-        if span <= 0:
+        # Build separate sampling windows from observed continuous sessions.
+        # A single min/max interval would include the 90-minute lunch break and
+        # silently accept horizons whose endpoints both fall inside LUNCH.
+        windows: list[tuple[pd.Timestamp, float]] = []
+        for _, phase in s.groupby("session", sort=False):
+            t_min = phase["ts"].min() + pd.Timedelta(minutes=3)
+            t_max = phase["ts"].max() - pd.Timedelta(seconds=horizon_s + 30)
+            span = (t_max - t_min).total_seconds()
+            if span > 0:
+                windows.append((t_min, span))
+        total_span = sum(span for _, span in windows)
+        if total_span <= 0:
             continue
         for k in range(orders_per_symbol):
-            ts = t_min + pd.Timedelta(seconds=float(rng.uniform(0, span)))
-            # loại lệnh có chân trời thực thi bắc qua nghỉ trưa (khoảng trống
-            # 90 phút không có thanh khoản — sẽ làm méo ước lượng thời gian khớp)
-            if session_of_time(ts.time()) != session_of_time((ts + pd.Timedelta(seconds=horizon_s)).time()):
+            offset = float(rng.uniform(0, total_span))
+            for t_min, span in windows:
+                if offset < span:
+                    ts = t_min + pd.Timedelta(seconds=offset)
+                    break
+                offset -= span
+            # Defensive assertion at the domain boundary: every simulated
+            # horizon must stay inside one continuous HOSE session.
+            if (session_of_time(ts.time()) not in {"LO_AM", "LO_PM"}
+                    or session_of_time((ts + pd.Timedelta(seconds=horizon_s)).time())
+                    != session_of_time(ts.time())):
                 continue
             side = int(rng.choice([-1, 1]))
             notional = float(np.exp(rng.uniform(np.log(size_range_vnd[0]), np.log(size_range_vnd[1]))))

@@ -175,16 +175,15 @@ def test_predict_models_beyond_book_full_adds_drift_and_risk(settings):
     preds = predict_all_models(f, order, v_rate=10.0, sigma=1.0,
                                kappa=0.1, y_risk=1.0, settings=settings)
     lad = f["ladder"]
-    w_vis, w_res = lad.filled_vis / qty, lad.qty_res / qty
+    w_vis = lad.filled_vis / qty
     hs = f["hs_bps"]
-    assert preds["ladder_only"]["e"] == pytest.approx(w_vis * lad.cost_vis_bps + w_res * hs)
-    # full = ladder_only + phần trôi giá kỳ vọng (OBI>0 trong fixture → bán bị bất lợi)
+    # In a horizon-capped case, the unfilled residual is marked to mid and
+    # therefore does not incur the half-spread assumed for an executed share.
+    # The full model's base cost is ladder fill + spread on expected residual fill.
     full = preds["_full_obj"]
     mu = 0.1 * f["obi_now"]
-    if full.w_unf == 0:
-        extra = w_res * (-1) * mu * full.tau_s / 2
-    else:
-        extra = (full.w_res * (-1) * mu * full.tau_s / 2
-                 + full.w_unf * (-1) * mu * float(settings.execution.horizon_s))
-    assert full.e_is_bps == pytest.approx(preds["ladder_only"]["e"] + extra, rel=1e-9)
+    extra = (full.w_res * (-1) * mu * full.tau_s / 2
+             + full.w_unf * (-1) * mu * float(settings.execution.horizon_s))
+    base = w_vis * lad.cost_vis_bps + full.w_res * hs
+    assert full.e_is_bps == pytest.approx(base + extra, rel=1e-9)
     assert full.sigma_is_bps > 0  # có phơi nhiễm thời gian → phải có rủi ro

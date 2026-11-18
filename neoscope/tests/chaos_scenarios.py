@@ -1,6 +1,6 @@
 """Kịch bản thử lỗi CÓ CHỦ ĐÍCH trên tầng RAW → chuẩn hóa (chaos engineering).
 
-Mỗi kịch bản tương ứng một tình huống đã xác nhận trong docs NEO API hoặc
+Mỗi kịch bản tương ứng một tình huống đã xác nhận trong dữ liệu thị trường hoặc
 một sự cố vận hành thật (mất kết nối, thông điệp lặp/muộn/sai thứ tự, reset
 bộ đếm, sổ bắt chéo, giá ngoài biên độ, thiếu trường, sai kiểu).
 

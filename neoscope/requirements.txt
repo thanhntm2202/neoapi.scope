@@ -10,5 +10,6 @@ plotly>=5.20
 loguru>=0.7
 python-dotenv>=1.0
 PyYAML>=6.0
+ssi-sdk==3.3.2
 pytest>=8
 python-docx>=1.1

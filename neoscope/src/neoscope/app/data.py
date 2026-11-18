@@ -18,7 +18,7 @@ import pandas as pd
 import streamlit as st
 
 from ..config import load_settings
-from ..data.store import list_session_dirs, read_manifest, read_parquet
+from ..data.store import list_session_dirs, read_manifest, read_parquet, session_date_of
 
 SNAP_COLS = ["ts", "seq", "symbol", "session_date", "session", "group", "bucket",
              "mid", "spread_bps", "depth_bid_vnd", "depth_ask_vnd", "obi",
@@ -104,7 +104,7 @@ def session_manifests(mode: str, config_hash: str) -> list[dict]:
     out = []
     for d in list_session_dirs(s.data_path(), mode):
         man = read_manifest(d)
-        out.append({"session_dir": d.name, "date": d.name.split("_", 1)[1], **man})
+        out.append({"session_dir": d.name, "date": session_date_of(d), **man})
     return out
 
 

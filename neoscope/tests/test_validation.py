@@ -45,13 +45,14 @@ def test_session_bootstrap_clusters_by_session_not_order():
     preds = _preds()
     boot = V.session_bootstrap(preds, "full", "ladder_only", reps=500, seed=7)
     # loss theo phiên: full (1+2)/2=1.5 và (1+2)/2=1.5; ladder (2+6)/2=4 và (4+6)/2=5
-    # Δ từng phiên = −2.5, −3.5 → trung bình −3.0; mọi bootstrap ≤ 0 → p = 0
+    # Δ từng phiên = −2.5, −3.5 → trung bình −3.0; exact sign test with 2/2
+    # negative session effects gives a discrete two-sided p-value of 0.5.
     assert boot["n_sessions"] == 2
     assert boot["delta_mae_bps"] == pytest.approx(-3.0)
     assert boot["per_session"]["2026-11-10"] == pytest.approx(-2.5)
     assert boot["per_session"]["2026-11-11"] == pytest.approx(-3.5)
     assert boot["ci95_lo"] >= -3.5 - 1e-9 and boot["ci95_hi"] <= -2.5 + 1e-9
-    assert boot["p_two_sided"] == 0.0
+    assert boot["p_two_sided"] == pytest.approx(0.5)
     # tái lập theo seed
     boot2 = V.session_bootstrap(preds, "full", "ladder_only", reps=500, seed=7)
     assert boot == boot2
@@ -144,6 +145,10 @@ def test_lhs_forward_ic_perfect_negative_by_construction():
 
 def test_alert_precision_recall_tolerance_window(tmp_settings):
     ds = "2026-11-03"
+    # Keep this fixture explicitly in the synthetic namespace even when a
+    # developer's local .env selects LIVE for the app.
+    tmp_settings._data["mode"] = "SYNTHETIC"
+    tmp_settings._data["provider"] = "SYNTHETIC"
     raw = tmp_settings.data_path("raw", f"SYNTH_{ds}")
     raw.mkdir(parents=True)
     (raw / "manifest.json").write_text(json.dumps({"mode": "SYNTHETIC", "synthetic": True}))

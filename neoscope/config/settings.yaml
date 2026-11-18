@@ -2,7 +2,8 @@
 # NeoScope settings — mọi "con số ma thuật" của hệ thống đều nằm ở đây
 # và được biện giải trong docs/thresholds.md (không ngưỡng tùy ý).
 # =====================================================================
-mode: SYNTHETIC            # SYNTHETIC | LIVE (LIVE cần .env + IP đã đăng ký với VPBankS)
+mode: SYNTHETIC            # SYNTHETIC | LIVE
+provider: SSI              # LIVE: SSI (mặc định) | NEO (nguồn dự phòng có chủ đích)
 timezone: Asia/Ho_Chi_Minh
 
 paths:
@@ -14,10 +15,19 @@ neo_api:
   auth_url: https://external.vpbanks.com.vn/auth/token
   base_url: https://neoapi.vpbanks.com.vn/neo-api/
   ws_url: ws://neoapi.vpbanks.com.vn/stock-stream/broker
-  rate_limit_rps: 5          # giới hạn cứng của NEO API (docs overview)
+  rate_limit_rps: 5
   device_type: Chrome
-  ws_watchdog_s: 45          # không thấy thông điệp trong phiên -> tái kết nối
+  ws_watchdog_s: 45
   rest_timeout_s: 15
+
+ssi_api:
+  api_url: https://api.ssi.com.vn
+  streaming_url: wss://stream.ssi.com.vn/ws/v3
+  rate_limit_rps: 5          # giới hạn mặc định thận trọng; SDK tôn trọng rate-limit response
+  timeout_ms: 20000
+  max_retries: 3
+  ws_watchdog_s: 45          # không thấy thông điệp trong phiên -> tái kết nối
+  ingest_queue_size: 10000   # buffer hữu hạn; quá tải dừng capture thay vì âm thầm bỏ tick
 
 watchlist:
   large: [HPG, VCB, FPT, SSI]   # nhóm thanh khoản cao (VN30)

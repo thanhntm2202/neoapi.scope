@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from neoscope.analytics.alerts import (METRICS, _gate_ok, _transform,
+from neoscope.analytics.alerts import (METRICS, _gate_ok, _priority, _transform,
                                        build_baseline, run_alerts)
 from neoscope.constants import VN_TZ
 
@@ -18,6 +18,18 @@ from .conftest import snap_row, snaps_frame
 
 DATES = ["2026-11-03", "2026-11-04", "2026-11-05"]
 N_TICKS = 180  # 15 phút, một bucket 40
+
+
+@pytest.mark.parametrize(("pct", "direction", "expected"), [
+    (0.999, "high", "P1"),
+    (0.995, "high", "P2"),
+    (0.990, "high", "P3"),
+    (0.001, "low", "P1"),
+    (0.005, "low", "P2"),
+    (0.010, "low", "P3"),
+])
+def test_alert_priority_is_empirical_tail_rank(pct, direction, expected):
+    assert _priority(pct, direction) == expected
 
 
 def _make_snaps(dates=DATES, seed=11, spike: dict | None = None) -> pd.DataFrame:

@@ -1,4 +1,4 @@
-"""Lưu trữ hai tầng: RAW bất biến (JSONL.gz) + CURATED (Parquet).
+"""Lưu trữ hai tầng: RAW append-only trong lúc capture + CURATED (Parquet).
 
 - RAW là nguồn sự thật: mọi thông điệp gốc kèm seq + arrival_ts, không sửa.
   Người chấm có thể replay toàn bộ pipeline từ RAW (tính tái lập).
@@ -24,6 +24,15 @@ def now_vn() -> datetime:
     return datetime.now(VN_TZ)
 
 
+def _sha256_file(path: Path, chunk_size: int = 1024 * 1024) -> str:
+    """Hash captures with bounded memory, including long high-volume sessions."""
+    digest = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(chunk_size), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def search_ts(series: pd.Series, ts: pd.Timestamp, side: str = "right") -> int:
     """searchsorted BỀN VỮNG với khác biệt đơn vị datetime (us ↔ ns) và múi giờ.
 
@@ -40,9 +49,13 @@ def search_ts(series: pd.Series, ts: pd.Timestamp, side: str = "right") -> int:
 
 
 def mode_prefix(mode: str) -> str:
-    """Tiền tố thư mục phiên: SYNTHETIC → SYNTH_ (ngắn gọn), LIVE → LIVE_."""
+    """Session namespace; keep each live provider in a separate series."""
     m = mode.upper()
-    return "SYNTH" if m == "SYNTHETIC" else m
+    if m == "SYNTHETIC":
+        return "SYNTH"
+    if m in {"LIVE_NEO", "LIVE_SSI"}:
+        return m
+    return m
 
 
 def session_dir_name(mode: str, date_str: str) -> str:
@@ -106,13 +119,15 @@ class RawWriter:
             "total_messages": self._seq,
             "closed_at": now_vn().isoformat(),
             "sha256": {
-                p.name: hashlib.sha256(p.read_bytes()).hexdigest()
+                p.name: _sha256_file(p)
                 for p in sorted(self.session_dir.glob("*.jsonl.gz"))
             },
             **self._meta,
         }
         mp = self.session_dir / "manifest.json"
-        mp.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp = self.session_dir / "manifest.json.tmp"
+        tmp.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(mp)
         return mp
 
 
@@ -145,7 +160,13 @@ def list_session_dirs(data_dir: Path, mode: str | None = None) -> list[Path]:
 
 
 def session_date_of(session_dir: Path) -> str:
-    return session_dir.name.split("_", 1)[1]
+    name = session_dir.name
+    parts = name.split("_")
+    if len(parts) >= 3 and parts[0] == "SYNTH":
+        return parts[1]
+    if len(parts) >= 4 and parts[0] == "LIVE" and parts[1] in {"NEO", "SSI"}:
+        return parts[2]
+    return name.rsplit("_", 1)[1]
 
 
 def write_parquet(df: pd.DataFrame, path: Path) -> None:

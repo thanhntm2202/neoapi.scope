@@ -1,7 +1,7 @@
-"""Kiểm thử 'bẫy dữ liệu' NEO API — trái tim của Tiêu chí 2 (20 điểm).
+"""Regression checks for provider-independent canonical data edge cases.
 
-Mỗi bẫy dưới đây đều xuất hiện trong payload mẫu chính thức hoặc là hệ quả
-tất yếu của quy ước API (bộ đếm lũy kế, timestamp không múi giờ). Kỳ vọng
+Each case is either observed in market-data payloads or follows from the
+canonical contract (cumulative counters, timestamps without zones). Expected
 không chỉ 'không crash' mà là HÀNH VI ĐÚNG: gắn cờ, giữ NaN, bảo toàn tổng.
 """
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""Bộ mô phỏng phiên giao dịch NEO API — CHẾ ĐỘ SYNTHETIC, GẮN NHÃN CÔNG KHAI.
+"""Bộ mô phỏng phiên giao dịch — CHẾ ĐỘ SYNTHETIC, GẮN NHÃN CÔNG KHAI.
 
 ⚠️ TOÀN BỘ DỮ LIỆU DO MODULE NÀY SINH RA LÀ MÔ PHỎNG, KHÔNG PHẢI DỮ LIỆU
 THỊ TRƯỜNG THẬT. Mỗi tệp raw mang meta `synthetic: true`, tên thư mục tiền
