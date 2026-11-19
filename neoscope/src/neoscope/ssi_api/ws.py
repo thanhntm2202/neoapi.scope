@@ -27,6 +27,7 @@ from ..config import Settings, env_secret
 from ..constants import VN_TZ
 from ..data.store import RawWriter
 from .auth import sdk_config
+from ssi_sdk.exceptions import WebSocketError
 
 _QUEUE_STOP = object()
 
@@ -120,6 +121,7 @@ class SsiMarketWS:
         self.status_path = settings.data_path("live_status_ssi.json")
         self._stop = threading.Event()
         self._msg_count = 0
+        self._topic_counts: dict[str, int] = {}
         self._state: dict[str, dict[str, Any]] = {}
         self._last_msg_mono = time.monotonic()
         self._status_state = "starting"
@@ -130,22 +132,63 @@ class SsiMarketWS:
         self._writer_thread: threading.Thread | None = None
         self._status_lock = threading.Lock()
         self._callback_errors = 0
+        self._subscription_audit: dict[str, Any] | None = None
 
     def _write_status(self, state: str, detail: str = "") -> None:
         with self._status_lock:
             self._status_state = state
-            self.status_path.parent.mkdir(parents=True, exist_ok=True)
-            status = json.dumps({
+            status: dict[str, Any] = {
                 "state": state, "detail": detail,
                 "updated_at": datetime.now(VN_TZ).isoformat(),
                 "messages": self._msg_count,
+                "topic_messages": dict(self._topic_counts),
                 "queue_depth": self._ingest_queue.qsize(),
                 "callback_errors": self._callback_errors,
                 "mode": "LIVE", "provider": "SSI FastConnect API v3",
-            }, ensure_ascii=False)
+            }
+            if self._subscription_audit is not None:
+                status["subscription_audit"] = self._subscription_audit
+            self.status_path.parent.mkdir(parents=True, exist_ok=True)
+            status_json = json.dumps(status, ensure_ascii=False)
             tmp = self.status_path.with_suffix(self.status_path.suffix + ".tmp")
-            tmp.write_text(status, encoding="utf-8")
+            tmp.write_text(status_json, encoding="utf-8")
             tmp.replace(self.status_path)
+
+    def _audit_subscriptions(self, stream: Any, symbols: list[str], indices: list[str]) -> None:
+        expected = [
+            *(f"{topic}.{symbol}" for topic in ("trade", "quote", "room", "market")
+              for symbol in symbols),
+            *(f"indexsummary.{index}" for index in indices),
+            "market.flag",
+        ]
+        try:
+            active = stream.list_subscription(timeout_ms=5000)
+        except WebSocketError as exc:
+            self._subscription_audit = {
+                "status": "unavailable",
+                "error": type(exc).__name__,
+                "expected_topics": expected,
+                "active_data_topics": None,
+                "missing_topics": None,
+            }
+            logger.warning("SSI subscription audit unavailable ({})", type(exc).__name__)
+            self._write_status(self._status_state)
+            return
+
+        active_topics = sorted(set(active.get("data", [])))
+        missing = sorted(set(expected) - set(active_topics))
+        self._subscription_audit = {
+            "status": "verified" if not missing else "missing_topics",
+            "checked_at": datetime.now(VN_TZ).isoformat(),
+            "expected_topics": expected,
+            "active_data_topics": active_topics,
+            "missing_topics": missing,
+        }
+        if missing:
+            logger.warning("SSI subscription audit: {} expected topics are not active", len(missing))
+        else:
+            logger.info("SSI subscription audit: all {} expected topics are active", len(expected))
+        self._write_status(self._status_state)
 
     def _canonical_stock(self, topic: str, data: dict[str, Any]) -> dict[str, Any] | None:
         symbol = str(_pick(data, "s", "symbol") or "").upper()
@@ -259,6 +302,8 @@ class SsiMarketWS:
 
     def _persist_message(self, topic: str, data: dict[str, Any]) -> None:
         self.writer.write(topic, data)
+        with self._status_lock:
+            self._topic_counts[topic] = self._topic_counts.get(topic, 0) + 1
         if topic in {"ssi_quote", "ssi_trade", "ssi_market", "ssi_room"}:
             canonical = self._canonical_stock(topic, data)
             if canonical:
@@ -269,6 +314,10 @@ class SsiMarketWS:
             canonical = self._canonical_index(summary_data)
             if canonical:
                 self.writer.write("marketInfo", canonical)
+        elif topic == "ssi_marketflag":
+            canonical = self._canonical_market_session(data)
+            if canonical:
+                self.writer.write("marketSession", canonical)
         self._msg_count += 1
         if self._status_state == "stale":
             self._write_status("connected")
@@ -331,6 +380,21 @@ class SsiMarketWS:
             "numberOfFl": _pick(data, "fl", "floors"),
         }
 
+    @staticmethod
+    def _canonical_market_session(data: dict[str, Any]) -> dict[str, Any] | None:
+        board = _pick(data, "board", "marketCode", "market")
+        flag = _pick(data, "flag", "f", "marketStatus", "status")
+        if not board and not flag:
+            return None
+        result: dict[str, Any] = {
+            "marketCode": board,
+            "marketStatus": flag,
+        }
+        trading_time = _pick(data, "trading_time", "tradingTime", "time", "t")
+        if trading_time:
+            result["time"] = trading_time
+        return result
+
     def run(self) -> None:
         try:
             from ssi_sdk import Auth, Stream
@@ -374,6 +438,7 @@ class SsiMarketWS:
                     ws.subscribe_market_flag()
                     self._write_status("connected")
                     logger.info("SSI FastConnect v3 stream connected; symbols={} (market data only)", len(symbols))
+                    self._audit_subscriptions(ws, symbols, list(self.cfg.indices))
                     while not self._stop.is_set():
                         ws.wait(timeout_ms=5000)
                         if datetime.now(VN_TZ).date() != self._capture_date:

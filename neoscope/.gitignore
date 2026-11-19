@@ -23,8 +23,11 @@ dist/
 # Dữ liệu runtime LIVE (chứa dữ liệu thị trường thu theo phiên của người chạy;
 # bộ SYNTHETIC tái lập được bằng seed nên vẫn commit để người chấm xem ngay)
 data/live_status.json
+data/live_status_*.json
 data/raw/LIVE_*/
 data/curated/LIVE_*/
+data/results/SSI/
+data/results/NEO/
 
 # Tệp tạm
 *.tmp

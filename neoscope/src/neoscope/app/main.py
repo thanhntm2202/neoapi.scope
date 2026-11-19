@@ -206,6 +206,26 @@ with st.sidebar:
                     st.info(status_line)
                 if stt.get("detail"):
                     st.caption(stt["detail"])
+                if isinstance(stt.get("subscription_audit"), dict):
+                    audit = stt["subscription_audit"]
+                    if audit.get("status") == "verified":
+                        active_topics = audit.get("active_data_topics") or []
+                        st.caption(f"SSI subscriptions: {len(active_topics)} topic đã xác nhận.")
+                    elif audit.get("status") == "missing_topics":
+                        missing = audit.get("missing_topics") or []
+                        st.warning("SSI chưa xác nhận các topic: " + ", ".join(missing))
+                    else:
+                        st.warning("Chưa xác minh được danh sách topic SSI đang đăng ký.")
+                topic_counts = stt.get("topic_messages")
+                if isinstance(topic_counts, dict):
+                    monitored_topics = (
+                        "ssi_quote", "ssi_trade", "ssi_room", "ssi_market",
+                        "ssi_indexsummary", "ssi_marketflag",
+                    )
+                    topic_line = " · ".join(
+                        f"{topic}: {topic_counts.get(topic, 0)}" for topic in monitored_topics
+                    )
+                    st.caption(f"Message theo topic: {topic_line}")
         else:
             st.warning("Chưa có trạng thái recorder. Khởi chạy `neoscope record` để bắt đầu capture.")
     if st.button("Làm mới dữ liệu", icon=":material/refresh:", width="stretch"):

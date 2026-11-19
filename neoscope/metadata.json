@@ -1,0 +1,5 @@
+{
+  "name": "NeoScope",
+  "description": "Phòng phân tích thanh khoản & vi cấu trúc thị trường chứng khoán Việt Nam — đo điểm LHS, ước tính chi phí thực thi Implementation Shortfall, cảnh báo bất thường và kiểm chứng walk-forward.",
+  "requestFramePermissions": []
+}

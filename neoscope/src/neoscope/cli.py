@@ -24,7 +24,7 @@ import pandas as pd
 from loguru import logger
 
 from .config import REPO_ROOT, load_settings
-from .data.store import list_session_dirs, write_parquet
+from .data.store import list_session_dirs, recover_incomplete_session, write_parquet
 
 
 def _new_live_capture_dir(settings, now=None) -> Path:
@@ -58,7 +58,11 @@ def cmd_analyze(args) -> None:
     data = load_curated(settings)
     snaps, bars = data["snapshots"], data["bars"]
     if snaps.empty:
-        raise RuntimeError("Chưa có curated — chạy `neoscope process` trước.")
+        raise RuntimeError(
+            "Chưa có curated snapshots cho chế độ/nguồn đang chọn. "
+            "Chạy `neoscope process` thành công trước; nếu process báo capture thiếu "
+            "manifest, hãy dừng recorder bằng Ctrl+C và đợi recorder kết thúc rồi thử lại."
+        )
 
     bars_lhs = compute_lhs(bars, settings)
     write_parquet(bars_lhs, settings.results_path("bars_lhs.parquet"))
@@ -183,6 +187,18 @@ def cmd_record(args) -> None:
         SsiMarketWS(settings, session_dir).run()
 
 
+def cmd_recover(args) -> None:
+    settings = load_settings(args.config)
+    if settings.mode != "LIVE" or settings.provider != "SSI":
+        raise RuntimeError("`neoscope recover` chỉ dùng với capture LIVE của provider SSI.")
+    raw_root = settings.data_path("raw").resolve()
+    session_dir = (raw_root / args.session).resolve()
+    if session_dir.parent != raw_root or not session_dir.name.startswith("LIVE_SSI_"):
+        raise RuntimeError("Capture phục hồi phải là thư mục LIVE_SSI trực tiếp bên trong data/raw.")
+    recovered = recover_incomplete_session(session_dir, "SSI FastConnect API v3")
+    logger.warning("Đã phục hồi bản sao có kiểm tra tại {}; bản gốc được giữ nguyên.", recovered)
+
+
 def cmd_snapshot(args) -> None:
     from .data.store import RawWriter
     from .neo_api.rest import NeoRestClient
@@ -244,7 +260,10 @@ def cmd_app(args) -> None:
            # Bind localhost and retain Streamlit's CORS/XSRF defaults. Remote
            # publication requires a separately reviewed authenticated proxy.
            ]
-    subprocess.run(cmd, cwd=REPO_ROOT, check=False)
+    try:
+        subprocess.run(cmd, cwd=REPO_ROOT, check=False)
+    except KeyboardInterrupt:
+        logger.info("Đã dừng NeoScope app.")
 
 
 def main() -> None:
@@ -270,6 +289,9 @@ def main() -> None:
     p.set_defaults(fn=cmd_all)
     p = sub.add_parser("record", help="LIVE: ghi provider đang chọn (SSI mặc định, NEO dự phòng)")
     p.set_defaults(fn=cmd_record)
+    p = sub.add_parser("recover", help="Phục hồi bản sao từ capture SSI bị gián đoạn; giữ nguyên bản gốc")
+    p.add_argument("--session", required=True, help="tên thư mục LIVE_SSI trong data/raw")
+    p.set_defaults(fn=cmd_recover)
     p = sub.add_parser("snapshot", help="LIVE NEO: ghi snapshot cổ phiếu qua REST")
     p.set_defaults(fn=cmd_snapshot)
     p = sub.add_parser("history", help="LIVE SSI: tải lịch sử OHLC ngày qua FastConnect v3 REST")

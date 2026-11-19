@@ -64,6 +64,10 @@ neoscope --mode LIVE app
 
 SSI depth is collected through its quote stream. SSI FastConnect v3 **REST** is also integrated (market-data only, OAuth2 token + token-bucket rate limit): `DailyOHLCHistory` for long-run OHLC context and `Securities` for watchlist validation — see `src/neoscope/ssi_api/rest.py` and [docs/ssi_fastconnect.md](docs/ssi_fastconnect.md). Fetch history for the watchlist with `neoscope history --from-date 2026-01-01 --to-date 2026-11-16`. The NEO recorder can also take a REST snapshot with `neoscope snapshot`. Each recorder start gets a unique capture directory beginning `LIVE_SSI_<date>_...` or `LIVE_NEO_<date>_...`; live results are separated by provider under `data/results/`. Do not treat sessions from different providers as one uninterrupted time series without a documented reconciliation study.
 
+Stop a recorder with Ctrl+C before processing so it can write its final manifest. `neoscope process` ignores finalized captures without `stockInfo` and reports an actionable error if no usable capture remains; captures without a manifest are still considered incomplete and are not processed.
+
+If an SSI recorder was interrupted and left an incomplete capture, `neoscope --mode LIVE recover --session <LIVE_SSI_capture_directory>` creates a separate recovered copy for inspection and processing. The original RAW directory is preserved. Recovery validates JSONL records, records discarded truncated tails and gzip streams without trailers in the recovered manifest, and refuses interior JSON corruption; recovered data must not be treated as a complete, uninterrupted feed.
+
 SSI's published quote examples express book prices in VND thousands while trade messages express prices in VND. Its adapter scales quote-book and market-band prices by 1,000 into canonical VND. SDK-decoded, provider-shaped messages are retained for audit; these are not packet-level copies of original wire bytes. Foreign buy/sell fields stay in SSI RAW messages until SSI confirms their counter semantics. Provider-specific missing fields remain null.
 
 ## Product flow

@@ -8,12 +8,15 @@ SSI FastConnect v3 is the default and primary live market-data provider in NeoSc
 |---|---|---|---|
 | `quote` | `ssi_quote` | `stockInfo` | Keeps up to five bid/ask levels in adapter state; maps first three levels into the established research schema. Quote and market prices are converted from VND thousands to VND. |
 | `trade` | `ssi_trade` | `stockInfo` | Trade `p`, `o`, `h`, `l`, `a` and cumulative volume `v`; prices and average are published in VND. Cumulative value is `a × v` when both are present. |
-| `room` | `ssi_room` | `stockInfo` | Foreign room and remaining-room fields are mapped. SSI buy/sell quantity/value fields stay in RAW because their counter semantics are not specified in the current contract. |
+| `room` | `ssi_room` | `stockInfo` | Foreign room and remaining-room fields are mapped when SSI sends the room topic. SSI buy/sell quantity/value fields stay in RAW because their counter semantics are not specified in the current contract. |
 | `market` | `ssi_market` | `stockInfo` | Reference, floor, and ceiling price; conversion to VND. |
 | `indexsummary` | `ssi_indexsummary` | `marketInfo` | Index value, breadth, market session, cumulative matched/put-through volume and value. |
-| Session flag / other | `ssi_unknown` or status | — | No fabricated equity fields. |
+| `market.flag` | `ssi_marketflag` | `marketSession` | Board, session flag, and provider event time are retained; subscription state is checked against the server's `LIST_SUBSCRIPTION` response. |
+| Other | `ssi_unknown` | — | No fabricated equity fields. |
 
 RAW records keep the SDK-decoded, SSI-shaped message, topic class, sequence, and local arrival timestamp; they are not packet-level copies of wire bytes. Canonical records are a derived compatibility layer, not a substitute for the decoded source fields. SSI does not publish the aggregate `totalBidQTTY`/`totalAskQTTY` fields expected by the previous provider adapter; those are left null.
+
+The recorder writes its expected and server-reported active topics to `data/live_status_ssi.json` as `subscription_audit`, along with per-topic message counts in `topic_messages`. A missing topic is reported separately from an active topic that has not emitted any event: the latter can be quiet or unavailable under the account's feed entitlement and must be checked with SSI. A successful socket connection alone does not confirm that every requested topic is active.
 
 ## Credentials and environment
 

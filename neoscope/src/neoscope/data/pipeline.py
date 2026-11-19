@@ -146,7 +146,34 @@ def process_all(settings: Settings, force: bool = False) -> list[Path]:
             f"Không có phiên RAW nào ở chế độ {settings.mode} / nguồn {settings.provider}. "
             "Chạy `neoscope synth` (mô phỏng) hoặc `neoscope record` (LIVE) trước."
         )
-    return [process_session(settings, d, force=force) for d in dirs]
+    processed: list[Path] = []
+    empty_sessions: list[Path] = []
+    for session_dir in dirs:
+        if next(read_raw(session_dir, "stockInfo"), None) is None:
+            empty_sessions.append(session_dir)
+            logger.warning("Bỏ qua capture không có stockInfo: {}", session_dir)
+            continue
+        processed.append(process_session(settings, session_dir, force=force))
+
+    if not processed:
+        skipped = ", ".join(p.name for p in empty_sessions)
+        raw_dir = settings.data_path("raw")
+        pending = sorted(
+            p.name for p in raw_dir.iterdir()
+            if p.is_dir()
+            and p.name.startswith(f"{settings.dataset_mode}_")
+            and not (p / "manifest.json").exists()
+        ) if raw_dir.exists() else []
+        pending_hint = (
+            f" Capture chưa hoàn tất (thiếu manifest): {', '.join(pending)}. "
+            "Dừng recorder bằng Ctrl+C và đợi nó kết thúc, rồi chạy lại."
+            if pending else ""
+        )
+        raise RuntimeError(
+            f"Không có phiên RAW nào chứa stockInfo để xử lý. Capture rỗng đã bỏ qua: "
+            f"{skipped}.{pending_hint}"
+        )
+    return processed
 
 
 def load_curated(settings: Settings) -> dict[str, pd.DataFrame]:

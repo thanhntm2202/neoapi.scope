@@ -737,8 +737,9 @@ def view_data(ctx: dict) -> None:
             "| `price`, `avg` | VND | giữ VND | Giá giao dịch/giá bình quân |\n"
             "| `total_volume` | lũy kế phiên | delta | Giá trị giao dịch xấp xỉ từ avg × volume |\n"
             "| ngoại mua/bán | semantics chưa xác nhận | không đưa vào flow analytics | RAW giữ nguyên |\n"
-            "| `indexsummary.data` | payload SSI | marketInfo | Thời gian sự kiện/arrival hiển thị theo UTC+7 |")
-        channels = "ssi_quote, ssi_trade, ssi_room, ssi_market, ssi_indexsummary"
+            "| `indexsummary.data` | payload SSI | marketInfo | Thời gian sự kiện/arrival hiển thị theo UTC+7 |\n"
+            "| `market.flag` | board, flag, trading time | marketSession | RAW giữ nguyên trong `ssi_marketflag` |")
+        channels = "ssi_quote, ssi_trade, ssi_room, ssi_market, ssi_indexsummary, ssi_marketflag, marketSession"
     elif ctx["settings"].provider == "NEO":
         st.markdown(
             "| Trường NEO | Kiểu gốc | Chuẩn hóa | Ghi chú |\n|---|---|---|---|\n"

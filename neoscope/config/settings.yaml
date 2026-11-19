@@ -14,7 +14,7 @@ paths:
 neo_api:
   auth_url: https://external.vpbanks.com.vn/auth/token
   base_url: https://neoapi.vpbanks.com.vn/neo-api/
-  ws_url: ws://neoapi.vpbanks.com.vn/stock-stream/broker
+  ws_url: wss://neoapi.vpbanks.com.vn/stock-stream/broker
   rate_limit_rps: 5
   device_type: Chrome
   ws_watchdog_s: 45

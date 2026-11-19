@@ -14,6 +14,7 @@ from neoscope.config import Settings
 from neoscope.data.store import read_raw
 from neoscope.ssi_api.auth import sdk_config
 from neoscope.ssi_api.ws import SsiMarketWS, _as_mapping, _ssi_price_to_vnd
+from ssi_sdk.exceptions import WebSocketError
 
 
 class _Side(Enum):
@@ -157,6 +158,79 @@ def test_index_summary_maps_breadth_and_exchange_totals(settings, tmp_path):
     assert index["totalValue"] == "1100000000"
 
 
+def test_market_flag_is_kept_raw_and_written_to_market_session(settings, tmp_path):
+    ws = SsiMarketWS(settings, tmp_path / "capture")
+    ws._start_writer()
+    ws._on_data(
+        SimpleNamespace(board="HOSE", trading_time="2026/07/29 09:00:00", flag="ATO"),
+        from_typed_callback=True,
+    )
+    ws._stop_writer()
+    ws.writer.close()
+
+    raw = list(read_raw(tmp_path / "capture", "ssi_marketflag"))
+    session = list(read_raw(tmp_path / "capture", "marketSession"))
+    assert len(raw) == len(session) == 1
+    assert raw[0]["data"] == {
+        "board": "HOSE",
+        "trading_time": "2026/07/29 09:00:00",
+        "flag": "ATO",
+    }
+    assert session[0]["data"] == {
+        "marketCode": "HOSE",
+        "marketStatus": "ATO",
+        "time": "2026/07/29 09:00:00",
+    }
+
+
+def test_subscription_audit_reports_missing_topics(settings, tmp_path):
+    isolated = Settings(copy.deepcopy(settings.as_dict()), settings.source)
+    isolated._data["paths"]["data_dir"] = str(tmp_path / "data")
+    ws = SsiMarketWS(isolated, tmp_path / "capture")
+
+    class FakeStreaming:
+        def list_subscription(self, timeout_ms):
+            assert timeout_ms == 5000
+            return {"trading": [], "data": ["trade.HPG", "quote.HPG", "market.flag"]}
+
+    ws._audit_subscriptions(FakeStreaming(), ["HPG"], ["VNINDEX"])
+
+    audit = ws._subscription_audit
+    assert audit is not None
+    assert audit["status"] == "missing_topics"
+    assert audit["active_data_topics"] == ["market.flag", "quote.HPG", "trade.HPG"]
+    assert audit["missing_topics"] == [
+        "indexsummary.VNINDEX",
+        "market.HPG",
+        "room.HPG",
+    ]
+    status = json.loads(
+        (tmp_path / "data" / "live_status_ssi.json").read_text(encoding="utf-8")
+    )
+    assert status["subscription_audit"] == audit
+
+
+def test_subscription_audit_marks_unavailable_without_claiming_topics_are_missing(
+        settings, tmp_path):
+    isolated = Settings(copy.deepcopy(settings.as_dict()), settings.source)
+    isolated._data["paths"]["data_dir"] = str(tmp_path / "data")
+    ws = SsiMarketWS(isolated, tmp_path / "capture")
+
+    class FakeStreaming:
+        def list_subscription(self, timeout_ms):
+            assert timeout_ms == 5000
+            raise WebSocketError("subscription list timed out")
+
+    ws._audit_subscriptions(FakeStreaming(), ["HPG"], ["VNINDEX"])
+
+    audit = ws._subscription_audit
+    assert audit is not None
+    assert audit["status"] == "unavailable"
+    assert audit["error"] == "WebSocketError"
+    assert audit["active_data_topics"] is None
+    assert audit["missing_topics"] is None
+
+
 def test_sdk_config_uses_environment_credentials_and_market_data_defaults(
         settings, tmp_path, monkeypatch):
     isolated = Settings(copy.deepcopy(settings.as_dict()), settings.source)
@@ -245,6 +319,19 @@ def test_recorder_uses_only_market_data_stream_and_closes_capture(
         def subscribe_market(self, symbols): calls.append(("market", symbols))
         def subscribe_index_summary(self, indices): calls.append(("indexsummary", indices))
         def subscribe_market_flag(self): calls.append(("marketflag",))
+        def list_subscription(self, timeout_ms):
+            calls.append(("list_subscription", timeout_ms))
+            symbols = recorder_ref["recorder"].cfg.watchlist()
+            indices = recorder_ref["recorder"].cfg.indices
+            return {
+                "trading": [],
+                "data": [
+                    *(f"{topic}.{symbol}" for topic in ("trade", "quote", "room", "market")
+                      for symbol in symbols),
+                    *(f"indexsummary.{index}" for index in indices),
+                    "market.flag",
+                ],
+            }
 
         def wait(self, timeout_ms):
             calls.append(("wait", timeout_ms))
@@ -281,14 +368,16 @@ def test_recorder_uses_only_market_data_stream_and_closes_capture(
     assert all(call[0] not in {"trade_order", "trading_ws"} for call in calls)
     assert {"trade", "quote", "room", "market", "indexsummary", "marketflag"}.issubset(
         {call[0] for call in calls})
+    assert ("list_subscription", 5000) in calls
     manifest = json.loads((capture / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["counts"]["ssi_quote"] == 1
     assert manifest["counts"]["stockInfo"] == 1
     status = json.loads((tmp_path / "data" / "live_status_ssi.json").read_text(encoding="utf-8"))
     assert status["state"] == "stopped"
+    assert status["subscription_audit"]["status"] == "verified"
+    assert status["topic_messages"]["ssi_quote"] == 1
     assert "secret-test" not in json.dumps(manifest)
     assert "secret-test" not in json.dumps(status)
     if otp:  # chuỗi rỗng luôn là tập con của mọi chuỗi; chỉ kiểm khi OTP thật sự được dùng
         assert otp not in json.dumps(manifest)
         assert otp not in json.dumps(status)
-

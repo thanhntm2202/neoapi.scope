@@ -10,9 +10,11 @@ import pandas as pd
 import pytest
 
 from neoscope.constants import VN_TZ, bucket_of_time, session_of_time, tick_size, round_to_tick
+from neoscope.data import pipeline
 from neoscope.data.pipeline import build_bars
 from neoscope.data.store import (RawWriter, list_session_dirs, read_manifest,
-                                 read_parquet, read_raw, search_ts,
+                                 read_parquet, read_raw,
+                                 recover_incomplete_session, search_ts,
                                  session_date_of, write_parquet)
 
 from .conftest import payload, snap_row, snaps_frame
@@ -71,6 +73,95 @@ def test_session_listing_filters_by_mode(tmp_path):
     assert [session_date_of(p) for p in syn] == ["2026-11-03", "2026-11-04"]
     assert [session_date_of(p) for p in live] == ["2026-11-05"]
     assert len(list_session_dirs(tmp_path)) == 3
+
+
+def test_process_all_skips_finalized_capture_without_stock_info(tmp_settings, monkeypatch):
+    empty = tmp_settings.data_path("raw", f"{tmp_settings.dataset_mode}_2026-11-03_090000_empty")
+    RawWriter(empty, tmp_settings.mode).close()
+
+    valid = tmp_settings.data_path("raw", f"{tmp_settings.dataset_mode}_2026-11-04_090000_valid")
+    writer = RawWriter(valid, tmp_settings.mode)
+    writer.write("stockInfo", payload())
+    writer.close()
+
+    processed: list = []
+    monkeypatch.setattr(
+        pipeline,
+        "process_session",
+        lambda settings, session_dir, force=False: processed.append(session_dir) or session_dir,
+    )
+
+    result = pipeline.process_all(tmp_settings)
+
+    assert result == [valid]
+    assert processed == [valid]
+
+
+def test_process_all_explains_when_only_empty_captures_exist(tmp_settings):
+    empty = tmp_settings.data_path("raw", f"{tmp_settings.dataset_mode}_2026-11-03_090000_empty")
+    RawWriter(empty, tmp_settings.mode).close()
+    incomplete = tmp_settings.data_path("raw", f"{tmp_settings.dataset_mode}_2026-11-03_091000_incomplete")
+    incomplete.mkdir(parents=True)
+    (incomplete / "stockInfo.jsonl.gz").touch()
+
+    with pytest.raises(RuntimeError, match="Capture chưa hoàn tất") as exc:
+        pipeline.process_all(tmp_settings)
+    assert incomplete.name in str(exc.value)
+    assert "manifest" in str(exc.value)
+
+
+def test_recover_incomplete_capture_copies_valid_records_and_preserves_source(tmp_path):
+    source = tmp_path / "raw" / "LIVE_SSI_2026-11-03_090000_capture"
+    writer = RawWriter(source, "LIVE", meta={"provider": "SSI FastConnect API v3",
+                                             "session_date": "2026-11-03",
+                                             "config_hash": "test-hash"})
+    writer.write("stockInfo", payload())
+    writer.write("ssi_trade", {"symbol": "HPG"})
+    writer.close()
+    (source / "manifest.json").unlink()
+    original_stock = source / "stockInfo.jsonl.gz"
+    with gzip.open(original_stock, "rt", encoding="utf-8") as f:
+        contents = f.read()
+    with gzip.open(original_stock, "wt", encoding="utf-8") as f:
+        f.write(contents)
+        f.write('{"seq": 3, "arrival_ts": "truncated')
+    compressed = original_stock.read_bytes()
+    original_stock.write_bytes(compressed[:-8])
+    (source / "ssi_unknown.jsonl.gz").touch()
+    before = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in source.iterdir()}
+
+    recovered = recover_incomplete_session(source, "SSI FastConnect API v3")
+
+    after = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in source.iterdir()}
+    manifest = read_manifest(recovered)
+    assert before == after
+    assert not (source / "manifest.json").exists()
+    assert manifest["recovered"] is True
+    assert manifest["counts"] == {"ssi_trade": 1, "stockInfo": 1}
+    assert manifest["recovery"]["discarded_truncated_tail_records"] == {"stockInfo": 1}
+    assert manifest["recovery"]["gzip_streams_missing_trailer"] == ["stockInfo.jsonl.gz"]
+    assert manifest["recovery"]["omitted_empty_files"] == ["ssi_unknown.jsonl.gz"]
+    assert len(list(read_raw(recovered, "stockInfo"))) == 1
+    assert recovered in list_session_dirs(tmp_path, "LIVE_SSI")
+    for name, digest in manifest["sha256"].items():
+        assert hashlib.sha256((recovered / name).read_bytes()).hexdigest() == digest
+
+
+def test_recover_incomplete_capture_rejects_interior_corruption(tmp_path):
+    source = tmp_path / "raw" / "LIVE_SSI_2026-11-03_090000_capture"
+    source.mkdir(parents=True)
+    header = {"_meta": True, "mode": "LIVE", "provider": "SSI FastConnect API v3",
+              "session_date": "2026-11-03", "config_hash": "test-hash"}
+    record = {"seq": 1, "channel": "stockInfo", "data": payload()}
+    with gzip.open(source / "stockInfo.jsonl.gz", "wt", encoding="utf-8") as f:
+        f.write(json.dumps(header) + "\n")
+        f.write('{"broken":\n')
+        f.write(json.dumps(record) + "\n")
+
+    with pytest.raises(RuntimeError, match="dữ liệu sau dòng JSON lỗi"):
+        recover_incomplete_session(source, "SSI FastConnect API v3")
+
+    assert not list(source.parent.glob(f"{source.name}_RECOVERED_*"))
 
 
 def test_parquet_roundtrip_preserves_tz(tmp_path):
