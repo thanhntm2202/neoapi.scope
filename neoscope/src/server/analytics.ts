@@ -506,6 +506,122 @@ export function buildCostCurve(params: {
   });
 }
 
+export interface OrderSliceStrategyRow {
+  slices: number;
+  label: string;
+  qtyPerSlice: number;
+  coveragePct: number;
+  visCostBps: number | null;
+  estIsBps: number | null;
+  feeTaxBps: number;
+  totalBps: number | null;
+  totalVnd: number | null;
+  savingVsSingleBps: number | null;
+}
+
+export interface OrderSlicingComparison {
+  rows: OrderSliceStrategyRow[];
+  assumptionNote: string;
+}
+
+export function buildOrderSlicingComparison(params: {
+  mid: number;
+  side: 1 | -1;
+  qty: number;
+  prices: (number | null)[];
+  vols: (number | null)[];
+  hs_bps: number;
+  obi_now: number;
+  v_rate: number | null;
+  sigma: number | null;
+  kappa: number;
+  y_risk: number;
+  settings: NeoScopeSettings;
+  hasFoldModel: boolean;
+  sliceCounts?: readonly number[];
+}): OrderSlicingComparison {
+  const {
+    mid,
+    side,
+    qty,
+    prices,
+    vols,
+    hs_bps,
+    obi_now,
+    v_rate,
+    sigma,
+    kappa,
+    y_risk,
+    settings,
+    hasFoldModel,
+    sliceCounts = [1, 2, 4, 8],
+  } = params;
+
+  const ex = settings.execution;
+  const hs = Number.isFinite(hs_bps) ? hs_bps : 0;
+  const totalNotional = qty * mid;
+  const tc = tradingCostsBps(totalNotional, side, ex.fee_rate, ex.sell_tax_rate);
+  const feeTaxBps = tc.fee_bps + tc.tax_bps;
+
+  const rawRows = sliceCounts.map((slices) => {
+    const k = Math.max(1, Math.round(slices));
+    const qtyPerSlice = Math.max(Math.round(qty / k), 1);
+    const lad = ladderWalk(side, qtyPerSlice, prices, vols, mid);
+    const w_vis = lad.filled_vis / qtyPerSlice;
+    const w_res = lad.qty_res / qtyPerSlice;
+    const detCostBps = lad.ok ? w_vis * (lad.cost_vis_bps ?? 0) + w_res * hs : null;
+
+    let estIsBps: number | null = detCostBps;
+    if (hasFoldModel && lad.ok) {
+      const est = expectedIsBps({
+        side,
+        qty: qtyPerSlice,
+        ladder: lad,
+        hs_bps,
+        obi_now,
+        kappa_bps_per_s: kappa,
+        v_rate_shares_per_s: v_rate,
+        sigma_bps_per_s: sigma,
+        rho: ex.participation_rate,
+        horizon_s: ex.horizon_s,
+        y_risk,
+        pi_z: ex.pi_z,
+      });
+      estIsBps = Number.isFinite(est.e_is_bps) ? est.e_is_bps : detCostBps;
+    }
+
+    const totalBps = estIsBps !== null ? estIsBps + feeTaxBps : null;
+    const totalVnd = totalBps !== null ? (totalBps / BPS) * totalNotional : null;
+
+    return {
+      slices: k,
+      label: k === 1 ? '1 lệnh gộp (Sweep ngay)' : `Chia ${k} đợt`,
+      qtyPerSlice,
+      coveragePct: lad.coverage * 100,
+      visCostBps: detCostBps,
+      estIsBps,
+      feeTaxBps,
+      totalBps,
+      totalVnd,
+    };
+  });
+
+  const baselineTotalBps = rawRows[0]?.totalBps ?? null;
+  const rows: OrderSliceStrategyRow[] = rawRows.map((row) => ({
+    ...row,
+    savingVsSingleBps:
+      baselineTotalBps !== null && row.totalBps !== null
+        ? baselineTotalBps - row.totalBps
+        : null,
+  }));
+
+  return {
+    rows,
+    assumptionNote:
+      'Giả định phục hồi sổ lệnh chuẩn tắc giữa các đợt chia nhỏ (full book replenishment, không own-impact chéo đợt) để minh họa đánh đổi trượt giá tức thời vs tổng phí/thuế cố định.',
+  };
+}
+
 export function simulateOrder(params: {
   snapsSym: SnapRow[];
   ts0Ms: number;
@@ -663,6 +779,133 @@ export function buildOrderBookFromSnap(arr: SnapRow): OrderBookSnapshot | null {
     bids,
     asks,
     maxVol,
+  };
+}
+
+export interface FailureCaseRow {
+  orderId: string;
+  sessionDate: string;
+  fold: number;
+  symbol: string;
+  group: string;
+  side: 1 | -1;
+  notionalVnd: number;
+  coveragePct: number;
+  tauS: number;
+  wResPct: number;
+  wUnfPct: number;
+  eIsBps: number;
+  realizedIsBps: number;
+  loBps: number;
+  hiBps: number;
+  errorBps: number;
+  absErrorBps: number;
+  outsidePi: boolean;
+  reasons: string[];
+}
+
+export interface FailureCasesSummary {
+  totalOrders: number;
+  outsidePiCount: number;
+  beyondBookTopCount: number;
+  cases: FailureCaseRow[];
+}
+
+export function buildTopFailureCases(
+  predictions: Record<string, any>[],
+  horizonS = 180,
+  limit = 8,
+): FailureCasesSummary {
+  const fullRows = predictions.filter(
+    (p) =>
+      p.model === 'full' &&
+      Number.isFinite(Number(p.e_is_bps)) &&
+      Number.isFinite(Number(p.realized_is_bps)),
+  );
+
+  let outsidePiCount = 0;
+  const enriched: FailureCaseRow[] = fullRows.map((p) => {
+    const eIsBps = Number(p.e_is_bps);
+    const realizedIsBps = Number(p.realized_is_bps);
+    const loBps = Number(p.lo_bps ?? eIsBps);
+    const hiBps = Number(p.hi_bps ?? eIsBps);
+    const coverage = Number(p.coverage ?? 1);
+    const tauS = Number(p.tau_s ?? 0);
+    const wRes = Number(p.w_res ?? 0);
+    const wUnf = Number(p.w_unf ?? 0);
+    const errorBps = eIsBps - realizedIsBps;
+    const absErrorBps = Math.abs(errorBps);
+    const outsidePi = realizedIsBps < loBps || realizedIsBps > hiBps;
+    if (outsidePi) outsidePiCount += 1;
+
+    const group = String(p.group || '');
+    const rawFlags = String(p.flags || '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    const reasons: string[] = [];
+    if (coverage < 1) {
+      reasons.push(`Vượt sổ (${Math.round(coverage * 100)}% khớp ngay)`);
+    }
+    if (wUnf > 0.01) {
+      reasons.push(`Dư chưa khớp sau ${Math.round(horizonS)}s (${Math.round(wUnf * 100)}%)`);
+    } else if (tauS >= 60) {
+      reasons.push(`Thực thi kéo dài (${Math.round(tauS)}s)`);
+    }
+    if (group === 'thin') {
+      reasons.push('Midcap mỏng dễ hụt độ sâu');
+    }
+    if (outsidePi) {
+      reasons.push(
+        realizedIsBps > hiBps
+          ? 'Thực tế vượt trần PI 90% (đuôi bất lợi)'
+          : 'Thực tế thấp dưới đáy PI 90% (đảo chiều thuận)',
+      );
+    }
+    for (const fl of rawFlags) {
+      if (reasons.length < 4) reasons.push(`Cờ ${fl}`);
+    }
+    if (!reasons.length) {
+      reasons.push(
+        errorBps < 0
+          ? 'Thị trường trôi bất lợi vượt dự báo'
+          : 'Thanh khoản hồi phục nhanh hơn dự báo',
+      );
+    }
+
+    return {
+      orderId: String(p.order_id || ''),
+      sessionDate: String(p.session_date || ''),
+      fold: Number(p.fold ?? 0),
+      symbol: String(p.symbol || ''),
+      group,
+      side: Number(p.side) === 1 ? 1 : -1,
+      notionalVnd: Number(p.notional_vnd ?? 0),
+      coveragePct: coverage * 100,
+      tauS,
+      wResPct: wRes * 100,
+      wUnfPct: wUnf * 100,
+      eIsBps,
+      realizedIsBps,
+      loBps,
+      hiBps,
+      errorBps,
+      absErrorBps,
+      outsidePi,
+      reasons,
+    };
+  });
+
+  enriched.sort((a, b) => b.absErrorBps - a.absErrorBps);
+  const cases = enriched.slice(0, Math.max(1, limit));
+  const beyondBookTopCount = cases.filter((c) => c.coveragePct < 100).length;
+
+  return {
+    totalOrders: enriched.length,
+    outsidePiCount,
+    beyondBookTopCount,
+    cases,
   };
 }
 

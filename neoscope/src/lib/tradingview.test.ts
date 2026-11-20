@@ -48,12 +48,12 @@ describe('TradingView UI helpers', () => {
     );
   });
 
-  it('sorts watchlist rows ascending/descending and keeps null values last', () => {
+  it('sorts watchlist rows ascending/descending including volatilityBps and keeps null values last', () => {
     const rows = [
-      { symbol: 'SSI', spreadBps: 14.2, lhsSeries: [72, 74] },
-      { symbol: 'FPT', spreadBps: 8.5, lhsSeries: [88, 91] },
-      { symbol: 'DIG', spreadBps: null, lhsSeries: [] },
-      { symbol: 'HPG', spreadBps: 11.1, lhsSeries: [80] },
+      { symbol: 'SSI', spreadBps: 14.2, volatilityBps: 24.5, lhsSeries: [72, 74] },
+      { symbol: 'FPT', spreadBps: 8.5, volatilityBps: 11.2, lhsSeries: [88, 91] },
+      { symbol: 'DIG', spreadBps: null, volatilityBps: null, lhsSeries: [] },
+      { symbol: 'HPG', spreadBps: 11.1, volatilityBps: 18.0, lhsSeries: [80] },
     ];
 
     assert.deepEqual(
@@ -62,6 +62,10 @@ describe('TradingView UI helpers', () => {
     );
     assert.deepEqual(
       sortWatchlist(rows, 'spreadBps', 'desc').map((r) => r.symbol),
+      ['SSI', 'HPG', 'FPT', 'DIG'],
+    );
+    assert.deepEqual(
+      sortWatchlist(rows, 'volatilityBps', 'desc').map((r) => r.symbol),
       ['SSI', 'HPG', 'FPT', 'DIG'],
     );
     assert.deepEqual(

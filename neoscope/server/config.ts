@@ -58,7 +58,7 @@ export function resolveRepoRoot(): string {
   return cwd;
 }
 
-export function loadSettings(): NeoScopeSettings {
+export function loadSettings(datasetOverride?: string): NeoScopeSettings {
   const cwd = process.cwd();
   dotenv.config({ path: path.join(cwd, '.env'), override: false });
   const repoRoot = resolveRepoRoot();
@@ -68,10 +68,22 @@ export function loadSettings(): NeoScopeSettings {
   const rawYaml = fs.readFileSync(settingsPath, 'utf-8');
   const parsed = (loadYaml(rawYaml) || {}) as SettingsData;
 
-  const envMode = (process.env.NEOSCOPE_MODE || parsed.mode || 'SYNTHETIC').toUpperCase();
-  const mode: 'SYNTHETIC' | 'LIVE' = envMode === 'LIVE' ? 'LIVE' : 'SYNTHETIC';
+  let envMode = (process.env.NEOSCOPE_MODE || parsed.mode || 'SYNTHETIC').toUpperCase();
+  let envProvider = (process.env.NEOSCOPE_PROVIDER || parsed.provider || 'SSI').toUpperCase();
+  if (datasetOverride) {
+    const ov = datasetOverride.toUpperCase();
+    if (ov === 'SYNTHETIC') {
+      envMode = 'SYNTHETIC';
+    } else if (ov === 'LIVE_SSI' || ov === 'SSI') {
+      envMode = 'LIVE';
+      envProvider = 'SSI';
+    } else if (ov === 'LIVE_NEO' || ov === 'NEO') {
+      envMode = 'LIVE';
+      envProvider = 'NEO';
+    }
+  }
 
-  const envProvider = (process.env.NEOSCOPE_PROVIDER || parsed.provider || 'SSI').toUpperCase();
+  const mode: 'SYNTHETIC' | 'LIVE' = envMode === 'LIVE' ? 'LIVE' : 'SYNTHETIC';
   const activeProvider: 'SSI' | 'NEO' = envProvider === 'NEO' ? 'NEO' : 'SSI';
 
   const provider: 'SYNTHETIC' | 'SSI' | 'NEO' = mode === 'LIVE' ? activeProvider : 'SYNTHETIC';

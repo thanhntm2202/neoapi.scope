@@ -97,6 +97,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
   // Sortable watchlist state
   const [sortKey, setSortKey] = useState<WatchlistSortKey>('symbol');
   const [sortDir, setSortDir] = useState<SortDir>('asc');
+  const [csvSaved, setCsvSaved] = useState(false);
 
   useEffect(() => {
     if (preferredTapeSym && availableSyms.includes(preferredTapeSym)) {
@@ -151,7 +152,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
     let cancelled = false;
     const params = new URLSearchParams();
     if (dataset) params.set('dataset', dataset);
-    if (symbols.length) params.set('symbols', symbols.join(','));
+    params.set('symbols', symbols.join(','));
     fetch(`/api/trends?${params.toString()}`)
       .then((r) => r.json())
       .then((d) => {
@@ -635,6 +636,21 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
         ]}
       />
 
+      {sessionData?.narrative && (
+        <section className="narrative-card" aria-label="Tóm tắt vi cấu trúc phiên">
+          <div className="narrative-head">
+            <span className="narrative-badge">Nhận định phiên tất định</span>
+            <h3 className="narrative-title">{sessionData.narrative.headline}</h3>
+          </div>
+          <ul className="narrative-list">
+            {(sessionData.narrative.bullets || []).map((b: string, i: number) => (
+              <li key={i}>{b}</li>
+            ))}
+          </ul>
+          <div className="narrative-caveat">{sessionData.narrative.caveat}</div>
+        </section>
+      )}
+
       {alertItems.length > 0 && (
         <>
           <SectionHeading
@@ -740,6 +756,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
                   key={w.id}
                   type="button"
                   className={`tv-seg-btn ${tapeWindow === w.id ? 'active' : ''}`}
+                  aria-pressed={tapeWindow === w.id}
                   onClick={() => setTapeWindow(w.id)}
                 >
                   {w.label}
@@ -773,6 +790,22 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
             >
               Spread (bps)
             </button>
+
+            {(tapeWindow !== 'ALL' || !showTrades || !showAlertMarkers || showSpreadPane) && (
+              <button
+                type="button"
+                className="tv-tool-btn"
+                onClick={() => {
+                  setTapeWindow('ALL');
+                  setShowTrades(true);
+                  setShowAlertMarkers(true);
+                  setShowSpreadPane(false);
+                }}
+                title="Đặt lại khung giờ và lớp hiển thị mặc định"
+              >
+                Đặt lại
+              </button>
+            )}
 
             <div className="tv-toolbar-right">
               {onJumpToPage && tapeSym && (
@@ -966,6 +999,15 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
                   <th className="num">
                     <button
                       type="button"
+                      className={`sort-th-btn num-align ${sortKey === 'volatilityBps' ? 'active' : ''}`}
+                      onClick={() => toggleSort('volatilityBps')}
+                    >
+                      {renderSortIcon('volatilityBps')} σ 1m (bps)
+                    </button>
+                  </th>
+                  <th className="num">
+                    <button
+                      type="button"
                       className={`sort-th-btn num-align ${sortKey === 'depthBidB' ? 'active' : ''}`}
                       onClick={() => toggleSort('depthBidB')}
                     >
@@ -996,6 +1038,8 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
               <tbody>
                 {sortedWatchlist.map((row: any) => {
                   const isActiveTape = row.symbol === tapeSym;
+                  const alertTotal = Number(row.alertCount ?? 0);
+                  const rareTotal = Number(row.rareAlertCount ?? 0);
                   return (
                     <tr
                       key={row.symbol}
@@ -1003,7 +1047,17 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
                       onClick={() => selectTapeSymbol(row.symbol, false)}
                     >
                       <td className="mono" style={{ fontWeight: 700, color: '#f0f3fa' }}>
-                        {row.symbol}
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                          {row.symbol}
+                          {alertTotal > 0 && (
+                            <span
+                              className={`wl-alert-badge ${rareTotal > 0 ? 'rare' : ''}`}
+                              title={`${alertTotal} cảnh báo trong phiên (${rareTotal} P1/P2)`}
+                            >
+                              {rareTotal > 0 ? `${rareTotal} P1/P2` : `${alertTotal} CB`}
+                            </span>
+                          )}
+                        </span>
                       </td>
                       <td>{row.groupLabel}</td>
                       <td>
@@ -1016,6 +1070,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
                         {row.midLast !== null ? Math.round(row.midLast).toLocaleString('en-US') : '—'}
                       </td>
                       <td className="num">{fmtNum(row.spreadBps, 1)}</td>
+                      <td className="num">{fmtNum(row.volatilityBps, 1)}</td>
                       <td className="num">{fmtNum(row.depthBidB, 2)}</td>
                       <td className="num">{fmtNum(row.obi, 2)}</td>
                       <td className="num">{fmtNum(row.cumVolM, 2)}</td>
@@ -1066,11 +1121,11 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
               </tbody>
             </table>
           </div>
-          <div style={{ marginTop: 12 }}>
+          <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
             <button
               type="button"
               className="btn"
-              onClick={() =>
+              onClick={() => {
                 downloadCsv(
                   `neoscope_watchlist_${session}.csv`,
                   [
@@ -1078,24 +1133,35 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
                     'Nhóm',
                     'Mid cuối (đ)',
                     'Spread (bps)',
+                    'σ 1m (bps)',
                     'Depth bid (tỷ đ)',
                     'OBI',
                     'KL phiên (triệu cp)',
+                    'Cảnh báo',
                   ],
                   sortedWatchlist.map((r: any) => [
                     r.symbol,
                     r.groupLabel,
                     r.midLast !== null ? Math.round(r.midLast) : '',
                     r.spreadBps !== null ? r.spreadBps.toFixed(1) : '',
+                    r.volatilityBps != null ? Number(r.volatilityBps).toFixed(1) : '',
                     r.depthBidB !== null ? r.depthBidB.toFixed(2) : '',
                     r.obi !== null ? r.obi.toFixed(2) : '',
                     r.cumVolM !== null ? r.cumVolM.toFixed(2) : '',
+                    r.alertCount ?? 0,
                   ]),
-                )
-              }
+                );
+                setCsvSaved(true);
+                window.setTimeout(() => setCsvSaved(false), 1800);
+              }}
             >
               <Download size={14} /> Tải watchlist (CSV)
             </button>
+            {csvSaved && (
+              <span className="inline-feedback-text" role="status">
+                Đã xuất neoscope_watchlist_{session}.csv
+              </span>
+            )}
           </div>
         </div>
       )}

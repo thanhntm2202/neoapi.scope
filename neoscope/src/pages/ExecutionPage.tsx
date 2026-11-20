@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { ChevronLeft, ChevronRight, Pause, Play } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { BellRing, ChevronLeft, ChevronRight, Pause, Play, X } from 'lucide-react';
 import { PlotlyChart } from '../components/PlotlyChart';
 import { C_ACCENT, C_BAD, C_GOOD, fmtNum, fmtVnd, fmtVnHms } from '../lib/format';
 
@@ -10,6 +10,8 @@ interface ExecutionPageProps {
   settings: any;
   preferredSym?: string | null;
   onConsumePreferredSym?: () => void;
+  preferredTsMs?: number | null;
+  onConsumePreferredTsMs?: () => void;
 }
 
 const NOTIONAL_OPTIONS = [50e6, 100e6, 200e6, 500e6, 1e9, 2e9, 3e9, 5e9];
@@ -21,6 +23,8 @@ export const ExecutionPage: React.FC<ExecutionPageProps> = ({
   settings,
   preferredSym,
   onConsumePreferredSym,
+  preferredTsMs,
+  onConsumePreferredTsMs,
 }) => {
   const [sym, setSym] = useState<string>(symbols[0] || '');
   const [side, setSide] = useState<1 | -1>(-1);
@@ -29,6 +33,16 @@ export const ExecutionPage: React.FC<ExecutionPageProps> = ({
   const [foldNote, setFoldNote] = useState<string>('');
   const [tsIdx, setTsIdx] = useState<number>(0);
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
+  const [alertJumpContext, setAlertJumpContext] = useState<{
+    sym: string;
+    tsMs: number;
+    matchedTs: string;
+  } | null>(null);
+  const pendingTsMsRef = useRef<number | null>(null);
+  const consumePreferredSymRef = useRef(onConsumePreferredSym);
+  const consumePreferredTsMsRef = useRef(onConsumePreferredTsMs);
+  consumePreferredSymRef.current = onConsumePreferredSym;
+  consumePreferredTsMsRef.current = onConsumePreferredTsMs;
 
   const [selectedDomLevel, setSelectedDomLevel] = useState<{
     bookSide: 'ask' | 'bid';
@@ -38,15 +52,25 @@ export const ExecutionPage: React.FC<ExecutionPageProps> = ({
   const [estimate, setEstimate] = useState<any>(null);
   const [estimateLoading, setEstimateLoading] = useState<boolean>(false);
   const [estimateErr, setEstimateErr] = useState<string>('');
+  const [compareSym, setCompareSym] = useState<string>('');
+  const [compareEstimate, setCompareEstimate] = useState<any>(null);
+  const [compareLoading, setCompareLoading] = useState<boolean>(false);
+  const [compareErr, setCompareErr] = useState<string>('');
   const [simResult, setSimResult] = useState<any>(null);
   const [simLoading, setSimLoading] = useState<boolean>(false);
 
   useEffect(() => {
+    if (preferredTsMs !== null && preferredTsMs !== undefined && Number.isFinite(preferredTsMs)) {
+      pendingTsMsRef.current = preferredTsMs;
+    }
+  }, [preferredTsMs]);
+
+  useEffect(() => {
     if (preferredSym && symbols.includes(preferredSym)) {
       setSym(preferredSym);
-      onConsumePreferredSym?.();
+      consumePreferredSymRef.current?.();
     }
-  }, [preferredSym, symbols, onConsumePreferredSym]);
+  }, [preferredSym, symbols]);
 
   useEffect(() => {
     if (symbols.length && (!sym || !symbols.includes(sym))) {
@@ -66,10 +90,27 @@ export const ExecutionPage: React.FC<ExecutionPageProps> = ({
       .then((r) => r.json())
       .then((d) => {
         if (cancelled) return;
-        const tsList = d.timestamps || [];
+        const tsList: { ts: string; ts_ms: number }[] = d.timestamps || [];
         setTimestamps(tsList);
         setFoldNote(d.foldNote || '');
-        setTsIdx(Math.floor(tsList.length / 2));
+        const targetTs = pendingTsMsRef.current;
+        if (targetTs !== null && tsList.length > 0) {
+          let bestIdx = 0;
+          let bestDiff = Infinity;
+          for (let i = 0; i < tsList.length; i++) {
+            const diff = Math.abs(tsList[i].ts_ms - targetTs);
+            if (diff < bestDiff) {
+              bestDiff = diff;
+              bestIdx = i;
+            }
+          }
+          setTsIdx(bestIdx);
+          setAlertJumpContext({ sym, tsMs: targetTs, matchedTs: tsList[bestIdx].ts });
+          pendingTsMsRef.current = null;
+          consumePreferredTsMsRef.current?.();
+        } else {
+          setTsIdx(Math.floor(tsList.length / 2));
+        }
       })
       .catch(() => {
         if (!cancelled) setTimestamps([]);
@@ -78,6 +119,33 @@ export const ExecutionPage: React.FC<ExecutionPageProps> = ({
       cancelled = true;
     };
   }, [dataset, session, sym]);
+
+  // Handle jump when staying on the same symbol and timestamps are already loaded
+  useEffect(() => {
+    if (
+      preferredTsMs === null ||
+      preferredTsMs === undefined ||
+      !Number.isFinite(preferredTsMs) ||
+      !timestamps.length
+    ) {
+      return;
+    }
+    if (preferredSym && preferredSym !== sym) return;
+    let bestIdx = 0;
+    let bestDiff = Infinity;
+    for (let i = 0; i < timestamps.length; i++) {
+      const diff = Math.abs(timestamps[i].ts_ms - preferredTsMs);
+      if (diff < bestDiff) {
+        bestDiff = diff;
+        bestIdx = i;
+      }
+    }
+    setIsPlaying(false);
+    setTsIdx(bestIdx);
+    setAlertJumpContext({ sym, tsMs: preferredTsMs, matchedTs: timestamps[bestIdx].ts });
+    pendingTsMsRef.current = null;
+    consumePreferredTsMsRef.current?.();
+  }, [preferredTsMs, preferredSym, sym, timestamps]);
 
   // TradingView bar-replay timer
   useEffect(() => {
@@ -139,6 +207,71 @@ export const ExecutionPage: React.FC<ExecutionPageProps> = ({
       cancelled = true;
     };
   }, [dataset, session, sym, side, notional, selectedTs?.ts_ms]);
+
+  // Smart default contrast symbol for Head-to-Head comparator (VN30 vs Midcap mỏng)
+  useEffect(() => {
+    const others = symbols.filter((s) => s !== sym);
+    if (!others.length) {
+      setCompareSym('');
+      setCompareEstimate(null);
+      return;
+    }
+    if (compareSym && compareSym !== sym && others.includes(compareSym)) return;
+    const largeSet = new Set<string>(settings?.watchlist?.large || []);
+    const thinSet = new Set<string>(settings?.watchlist?.thin || []);
+    const primaryIsLarge = largeSet.has(sym);
+    const contrast = primaryIsLarge
+      ? others.find((s) => thinSet.has(s))
+      : thinSet.has(sym)
+        ? others.find((s) => largeSet.has(s))
+        : undefined;
+    setCompareSym(contrast || others[0]);
+  }, [sym, symbols, settings, compareSym]);
+
+  useEffect(() => {
+    if (!session || !compareSym || compareSym === sym || !selectedTs) {
+      setCompareEstimate(null);
+      return;
+    }
+    let cancelled = false;
+    setCompareErr('');
+    setCompareLoading(true);
+    fetch('/api/execution/estimate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        dataset,
+        session,
+        symbol: compareSym,
+        side,
+        notional,
+        ts_ms: selectedTs.ts_ms,
+      }),
+    })
+      .then(async (r) => {
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error || 'Không ước tính được mã đối chứng');
+        return d;
+      })
+      .then((d) => {
+        if (!cancelled) {
+          setCompareEstimate(d);
+          setCompareErr('');
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setCompareEstimate(null);
+          setCompareErr(err.message);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setCompareLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [dataset, session, sym, compareSym, side, notional, selectedTs?.ts_ms]);
 
   const runSimulator = async () => {
     if (!estimate || !selectedTs) return;
@@ -320,6 +453,44 @@ export const ExecutionPage: React.FC<ExecutionPageProps> = ({
     return traces;
   }, [estimate, notionalIdx]);
 
+  const h2hCurveData = useMemo(() => {
+    const c1: any[] = estimate?.costCurve || [];
+    const c2: any[] = compareEstimate?.costCurve || [];
+    if (!c1.length || !c2.length) return [];
+    const xLabels = c1.map((p) =>
+      p.notional >= 1e9 ? `${p.notional / 1e9} tỷ` : `${p.notional / 1e6} triệu`,
+    );
+    const full1 =
+      estimate?.hasFoldModel !== false && c1.some((p) => p.e_is_bps !== null && Number.isFinite(p.e_is_bps));
+    const full2 =
+      compareEstimate?.hasFoldModel !== false &&
+      c2.some((p) => p.e_is_bps !== null && Number.isFinite(p.e_is_bps));
+    const y1 = c1.map((p) => (full1 ? p.e_is_bps : p.cost_vis_bps));
+    const y2 = c2.map((p) => (full2 ? p.e_is_bps : p.cost_vis_bps));
+    return [
+      {
+        x: xLabels,
+        y: y1,
+        type: 'scatter',
+        mode: 'lines+markers',
+        name: `${sym} (Mã chính)`,
+        line: { color: C_ACCENT, width: 2.5 },
+        marker: { size: 6, color: C_ACCENT },
+        hovertemplate: `${sym} %{x}: %{y:.2f} bps<extra></extra>`,
+      },
+      {
+        x: xLabels,
+        y: y2,
+        type: 'scatter',
+        mode: 'lines+markers',
+        name: `${compareSym} (Đối chứng)`,
+        line: { color: '#f59e0b', width: 2.5, dash: 'dash' },
+        marker: { size: 6, color: '#f59e0b', symbol: 'diamond' },
+        hovertemplate: `${compareSym} %{x}: %{y:.2f} bps<extra></extra>`,
+      },
+    ];
+  }, [estimate, compareEstimate, sym, compareSym]);
+
   const ob = estimate?.orderBook;
   const domSummary = useMemo(() => {
     if (!ob || !selectedDomLevel) return null;
@@ -360,6 +531,32 @@ export const ExecutionPage: React.FC<ExecutionPageProps> = ({
         từ fold walk-forward — không fit trên phiên đang xem.
       </p>
       {foldNote && <div className="small-caption">{foldNote}</div>}
+
+      {alertJumpContext && (
+        <div
+          id="alert-jump-banner"
+          className="callout info"
+          style={{ justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}
+        >
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+            <BellRing size={15} />
+            <span>
+              Đang mô phỏng tại thời điểm cảnh báo của <strong>{alertJumpContext.sym}</strong> ·
+              khớp snapshot sổ lệnh LO gần nhất lúc{' '}
+              <strong className="mono">{fmtVnHms(alertJumpContext.matchedTs)} UTC+7</strong>.
+            </span>
+          </span>
+          <button
+            type="button"
+            className="btn"
+            style={{ padding: '3px 8px', fontSize: 11.5 }}
+            onClick={() => setAlertJumpContext(null)}
+            aria-label="Đóng thông báo chuyển từ cảnh báo"
+          >
+            <X size={13} /> Đóng
+          </button>
+        </div>
+      )}
 
       <div className="card-panel">
         <div className="grid-3">
@@ -755,6 +952,344 @@ export const ExecutionPage: React.FC<ExecutionPageProps> = ({
                 Nhấp vào bất kỳ điểm nào trên đường cong để đổi nhanh quy mô lệnh mô phỏng. Độ dốc
                 tăng mạnh khi lệnh vượt thanh khoản 3 mức hiển thị.
               </div>
+            </div>
+          )}
+
+          {estimate?.slicingComparison?.rows?.length > 0 && (() => {
+            const cmp = estimate.slicingComparison;
+            const rows: any[] = cmp.rows;
+            const totalOrderVnd = Number(estimate.qty || 0) * Number(estimate.mid || 0);
+            const maxAbsTotal = Math.max(
+              ...rows.map((r) => Math.max(0, Number(r.estIsBps ?? 0)) + Math.max(0, Number(r.feeTaxBps ?? 0))),
+              1,
+            );
+            return (
+              <div className="card-panel" id="slicing-comparison-card" style={{ marginTop: 14 }}>
+                <div className="narrative-head" style={{ marginBottom: 8 }}>
+                  <span className="narrative-badge">Tối ưu chia nhỏ lệnh</span>
+                  <h4 className="narrative-title">
+                    So sánh chiến lược chia nhỏ lệnh (1 / 2 / 4 / 8 đợt) · Phí &amp; Thuế giao dịch VN
+                  </h4>
+                </div>
+                <p className="small-caption" style={{ marginTop: 0 }}>
+                  Phân tách rõ chi phí tác động thị trường (IS) và chi phí giao dịch cố định (phí
+                  môi giới {(settings.execution.fee_rate * 100).toFixed(2)}% + thuế bán{' '}
+                  {(settings.execution.sell_tax_rate * 100).toFixed(1)}%). Tổng giá trị lệnh:{' '}
+                  <strong className="mono">{fmtVnd(totalOrderVnd)} đ</strong>.
+                </p>
+
+                <div className="slicing-bars" aria-label="Biểu đồ thanh so sánh cấu phần chi phí theo số đợt chia lệnh">
+                  {rows.map((r) => {
+                    const estIsVal = Number(r.estIsBps ?? 0);
+                    const feeVal = Number(r.feeTaxBps ?? 0);
+                    const isPositive = Math.max(0, estIsVal);
+                    const isWidthPct = (isPositive / maxAbsTotal) * 100;
+                    const feeWidthPct = (Math.max(0, feeVal) / maxAbsTotal) * 100;
+                    return (
+                      <div key={r.slices} className="slicing-bar-row">
+                        <div className="slicing-bar-label">
+                          <strong>{r.label}</strong>
+                          <span className="mono">{Math.round(Number(r.qtyPerSlice ?? 0)).toLocaleString('en-US')} cp/đợt</span>
+                        </div>
+                        <div className="slicing-bar-track" title={`IS: ${fmtNum(r.estIsBps, 2)} bps · Phí+thuế: ${fmtNum(r.feeTaxBps, 2)} bps`}>
+                          <div
+                            className="slicing-bar-seg is"
+                            style={{ width: `${Math.min(100, isWidthPct)}%` }}
+                          />
+                          <div
+                            className="slicing-bar-seg fee"
+                            style={{ width: `${Math.min(100 - Math.min(100, isWidthPct), feeWidthPct)}%` }}
+                          />
+                        </div>
+                        <div className="slicing-bar-val mono">
+                          {fmtNum(r.totalBps, 2)} bps
+                        </div>
+                      </div>
+                    );
+                  })}
+                  <div className="slicing-legend">
+                    <span>
+                      <i className="slicing-swatch is" /> Tác động sổ &amp; IS kỳ vọng (bps)
+                    </span>
+                    <span>
+                      <i className="slicing-swatch fee" /> Phí môi giới + thuế bán cố định (bps)
+                    </span>
+                  </div>
+                </div>
+
+                <div className="table-wrap" style={{ marginTop: 12 }}>
+                  <table className="neo-table compact">
+                    <thead>
+                      <tr>
+                        <th>Chiến lược</th>
+                        <th className="num">KL/đợt</th>
+                        <th className="num">Phủ sổ</th>
+                        <th className="num">Quét sổ</th>
+                        <th className="num">IS (bps)</th>
+                        <th className="num">Phí+Thuế</th>
+                        <th className="num">Tổng (bps)</th>
+                        <th className="num">Tổng (VND)</th>
+                        <th className="num">So với 1 lệnh</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows.map((r) => {
+                        const sav = r.savingVsSingleBps;
+                        return (
+                          <tr key={r.slices}>
+                            <td style={{ whiteSpace: 'nowrap' }}>
+                              <strong>{r.slices === 1 ? '1 lệnh gộp' : `Chia ${r.slices} đợt`}</strong>
+                            </td>
+                            <td className="num">{Math.round(Number(r.qtyPerSlice ?? 0)).toLocaleString('en-US')} cp</td>
+                            <td className="num">{fmtNum(r.coveragePct, 0)}%</td>
+                            <td className="num">{fmtNum(r.visCostBps, 2)}</td>
+                            <td className="num">{fmtNum(r.estIsBps, 2)}</td>
+                            <td className="num">{fmtNum(r.feeTaxBps, 2)}</td>
+                            <td className="num">
+                              <strong>{fmtNum(r.totalBps, 2)}</strong>
+                            </td>
+                            <td className="num" style={{ whiteSpace: 'nowrap' }}>
+                              {r.totalVnd != null ? `${fmtVnd(r.totalVnd)} đ` : '—'}
+                            </td>
+                            <td className="num" style={{ whiteSpace: 'nowrap' }}>
+                              {r.slices === 1 || sav === null || sav === undefined ? (
+                                <span style={{ color: '#787b86' }}>Gốc (0.00)</span>
+                              ) : (
+                                <span style={{ color: sav >= 0 ? '#4dd0c1' : '#ff8a80', fontWeight: 700 }}>
+                                  {sav >= 0 ? `Giảm ${sav.toFixed(2)}` : `+${Math.abs(sav).toFixed(2)}`} bps
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+
+                {cmp.assumptionNote && (
+                  <div className="small-caption" style={{ marginBottom: 0 }}>
+                    <strong>Giả định minh bạch:</strong> {cmp.assumptionNote}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
+          {symbols.length >= 2 && (
+            <div className="card-panel" id="head-to-head-card" style={{ marginTop: 14 }}>
+              <div className="h2h-header-row">
+                <div>
+                  <div className="narrative-head" style={{ marginBottom: 4 }}>
+                    <span className="narrative-badge">Đối chứng thanh khoản trực tiếp</span>
+                    <h4 className="narrative-title">
+                      So sánh thực thi 2 mã cạnh nhau: {sym} vs {compareSym || '—'}
+                    </h4>
+                  </div>
+                  <div className="small-caption" style={{ margin: 0 }}>
+                    Cùng chiều{' '}
+                    <strong style={{ color: side === -1 ? '#ff8a80' : '#4dd0c1' }}>
+                      {side === -1 ? 'BÁN' : 'MUA'}
+                    </strong>{' '}
+                    · Quy mô <strong>{fmtVnd(notional)} đ</strong> · Khớp cùng thời điểm snapshot{' '}
+                    <span className="mono">{selectedTs ? fmtVnHms(selectedTs.ts) : '—'} UTC+7</span>
+                  </div>
+                </div>
+                <div className="h2h-picker">
+                  <label className="field-label" htmlFor="exec-compare-sym">
+                    Chọn mã đối chứng
+                  </label>
+                  <select
+                    id="exec-compare-sym"
+                    className="select-input"
+                    value={compareSym}
+                    onChange={(e) => setCompareSym(e.target.value)}
+                  >
+                    {symbols
+                      .filter((s) => s !== sym)
+                      .map((s) => {
+                        const isThin = (settings?.watchlist?.thin || []).includes(s);
+                        return (
+                          <option key={s} value={s}>
+                            {s} ({isThin ? 'Midcap mỏng' : 'VN30 lớn'})
+                          </option>
+                        );
+                      })}
+                  </select>
+                </div>
+              </div>
+
+              {compareErr && <div className="callout warning">{compareErr}</div>}
+
+              {compareEstimate && (() => {
+                const largeSet = new Set<string>(settings?.watchlist?.large || []);
+                const grp1 = largeSet.has(sym) ? 'VN30 lớn' : 'Midcap mỏng';
+                const grp2 = largeSet.has(compareSym) ? 'VN30 lớn' : 'Midcap mỏng';
+                const is1 =
+                  hasFold && estimate.full?.e_is_bps != null
+                    ? Number(estimate.full.e_is_bps)
+                    : Number(estimate.ladder?.cost_vis_bps ?? 0);
+                const cmpFold =
+                  compareEstimate.hasFoldModel !== false && Boolean(compareEstimate.full);
+                const is2 =
+                  cmpFold && compareEstimate.full?.e_is_bps != null
+                    ? Number(compareEstimate.full.e_is_bps)
+                    : Number(compareEstimate.ladder?.cost_vis_bps ?? 0);
+                const cov1 = Number(estimate.ladder?.coverage ?? 0) * 100;
+                const cov2 = Number(compareEstimate.ladder?.coverage ?? 0) * 100;
+                const vis1 = Number(estimate.ladder?.cost_vis_bps ?? 0);
+                const vis2 = Number(compareEstimate.ladder?.cost_vis_bps ?? 0);
+                const fee1 = Number(estimate.costs?.fee_bps ?? 0) + Number(estimate.costs?.tax_bps ?? 0);
+                const fee2 =
+                  Number(compareEstimate.costs?.fee_bps ?? 0) +
+                  Number(compareEstimate.costs?.tax_bps ?? 0);
+                const allIn1 = is1 + fee1;
+                const allIn2 = is2 + fee2;
+                const val1 = (allIn1 / 1e4) * (estimate.qty * estimate.mid);
+                const val2 = (allIn2 / 1e4) * (compareEstimate.qty * compareEstimate.mid);
+                const slice4_1 = estimate.slicingComparison?.rows?.find((r: any) => r.slices === 4);
+                const slice4_2 = compareEstimate.slicingComparison?.rows?.find(
+                  (r: any) => r.slices === 4,
+                );
+                const diffIs = is2 - is1;
+                const diffCov = cov2 - cov1;
+                const diffAllIn = allIn2 - allIn1;
+                const diffVal = val2 - val1;
+
+                return (
+                  <div className={compareLoading ? 'is-loading-panel' : undefined}>
+                    <div className="table-wrap">
+                      <table className="neo-table compact">
+                        <thead>
+                          <tr>
+                            <th>Chỉ tiêu thực thi</th>
+                            <th className="num">
+                              <span className="h2h-sym-badge primary">{sym}</span>
+                            </th>
+                            <th className="num">
+                              <span className="h2h-sym-badge compare">{compareSym}</span>
+                            </th>
+                            <th className="num">Chênh lệch ({compareSym} − {sym})</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr>
+                            <td>Nhóm thanh khoản</td>
+                            <td className="num">{grp1}</td>
+                            <td className="num">{grp2}</td>
+                            <td className="num" style={{ color: '#94a3b8' }}>
+                              {grp1 === grp2 ? 'Cùng nhóm' : 'Chéo nhóm'}
+                            </td>
+                          </tr>
+                          <tr>
+                            <td>Giá mid · Khối lượng lệnh</td>
+                            <td className="num">
+                              {Math.round(estimate.mid).toLocaleString('en-US')} đ ·{' '}
+                              {estimate.qty.toLocaleString('en-US')} cp
+                            </td>
+                            <td className="num">
+                              {Math.round(compareEstimate.mid).toLocaleString('en-US')} đ ·{' '}
+                              {compareEstimate.qty.toLocaleString('en-US')} cp
+                            </td>
+                            <td className="num" style={{ color: '#94a3b8' }}>
+                              Cùng ~{fmtVnd(notional)} đ
+                            </td>
+                          </tr>
+                          <tr>
+                            <td>Đáp ứng trong sổ 3 mức</td>
+                            <td className="num">
+                              <strong>{cov1.toFixed(0)}%</strong>
+                            </td>
+                            <td className="num">
+                              <strong>{cov2.toFixed(0)}%</strong>
+                            </td>
+                            <td
+                              className="num"
+                              style={{ color: diffCov >= 0 ? '#4dd0c1' : '#ff8a80', fontWeight: 700 }}
+                            >
+                              {diffCov >= 0 ? '+' : ''}
+                              {diffCov.toFixed(0)} điểm %
+                            </td>
+                          </tr>
+                          <tr>
+                            <td>Chi phí quét sổ tất định</td>
+                            <td className="num">{vis1.toFixed(2)} bps</td>
+                            <td className="num">{vis2.toFixed(2)} bps</td>
+                            <td className="num">
+                              {vis2 - vis1 >= 0 ? '+' : ''}
+                              {(vis2 - vis1).toFixed(2)} bps
+                            </td>
+                          </tr>
+                          <tr>
+                            <td>{hasFold && cmpFold ? 'IS kỳ vọng (full)' : 'Chi phí tác động'}</td>
+                            <td className="num">
+                              <strong>{is1.toFixed(2)} bps</strong>
+                            </td>
+                            <td className="num">
+                              <strong>{is2.toFixed(2)} bps</strong>
+                            </td>
+                            <td
+                              className="num"
+                              style={{ color: diffIs > 0 ? '#ff8a80' : '#4dd0c1', fontWeight: 700 }}
+                            >
+                              {diffIs >= 0 ? '+' : ''}
+                              {diffIs.toFixed(2)} bps
+                            </td>
+                          </tr>
+                          <tr>
+                            <td>Tổng tất cả (IS + Phí + Thuế)</td>
+                            <td className="num">
+                              <strong>{allIn1.toFixed(2)} bps</strong> ({(val1 / 1e6).toFixed(2)} tr đ)
+                            </td>
+                            <td className="num">
+                              <strong>{allIn2.toFixed(2)} bps</strong> ({(val2 / 1e6).toFixed(2)} tr đ)
+                            </td>
+                            <td
+                              className="num"
+                              style={{ color: diffAllIn > 0 ? '#ff8a80' : '#4dd0c1', fontWeight: 700 }}
+                            >
+                              {diffAllIn >= 0 ? '+' : ''}
+                              {diffAllIn.toFixed(2)} bps ({diffVal >= 0 ? '+' : ''}
+                              {(diffVal / 1e6).toFixed(2)} tr đ)
+                            </td>
+                          </tr>
+                          <tr>
+                            <td>Phương án chia 4 đợt (tổng bps)</td>
+                            <td className="num">
+                              {slice4_1?.totalBps != null ? `${slice4_1.totalBps.toFixed(2)} bps` : '—'}
+                            </td>
+                            <td className="num">
+                              {slice4_2?.totalBps != null ? `${slice4_2.totalBps.toFixed(2)} bps` : '—'}
+                            </td>
+                            <td className="num" style={{ color: '#4dd0c1' }}>
+                              {slice4_1?.savingVsSingleBps != null &&
+                              slice4_2?.savingVsSingleBps != null
+                                ? `Tiết kiệm ${slice4_1.savingVsSingleBps.toFixed(1)} vs ${slice4_2.savingVsSingleBps.toFixed(1)} bps`
+                                : '—'}
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {h2hCurveData.length > 0 && (
+                      <div style={{ marginTop: 12 }}>
+                        <PlotlyChart
+                          data={h2hCurveData}
+                          height={280}
+                          title={`Đường cong chi phí thực thi (50 triệu → 5 tỷ VND): ${sym} vs ${compareSym}`}
+                          layout={{
+                            xaxis: { title: 'Quy mô lệnh' },
+                            yaxis: { title: 'IS kỳ vọng (bps)' },
+                            legend: { orientation: 'h', y: 1.14 },
+                          }}
+                          alt={`So sánh đường cong chi phí thực thi giữa ${sym} và ${compareSym}.`}
+                        />
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
           )}
 

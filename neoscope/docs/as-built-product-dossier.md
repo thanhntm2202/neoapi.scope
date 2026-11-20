@@ -10,7 +10,7 @@ Bài toán người dùng: bảng giá cho biết giá và khối lượng, như
 
 ### Điều chỉnh nguồn dữ liệu so với đề gốc
 
-Đề học phần nêu NEO API là nguồn hoặc hạ tầng cốt lõi mặc định và cho phép SSI làm nguồn bổ sung. Theo xác nhận của nhóm, giảng viên đã cho phép SSI FastConnect thay thế hoàn toàn NEO API trong đồ án này. Vì vậy NeoScope dùng SSI v3 làm nguồn live chính, còn NEO là adapter dự phòng tùy chọn. Khi nộp, đính kèm bằng chứng phê duyệt để người chấm áp dụng đúng phương án đã được duyệt khi đối chiếu rubric; không trình bày phê duyệt này như câu chữ nguyên văn của đề. Xem [đề học phần](de-bai/De-thi-cuoi-ky-NEO-API.docx), [README](../README.md), và [hợp đồng nguồn dữ liệu](provider_contracts.md).
+Đề học phần nêu NEO API là nguồn hoặc hạ tầng cốt lõi mặc định và ghi rõ SSI có thể thay thế hoàn toàn khi NEO API gặp lỗi; giảng viên đã xác nhận cách áp dụng này cho đồ án. Vì vậy NeoScope dùng SSI v3 làm nguồn live mặc định/thay thế được phê duyệt, còn NEO vẫn là adapter tùy chọn. Hai nguồn được thu và phân tích theo namespace riêng; phê duyệt thay thế không đồng nghĩa với việc trộn dữ liệu của hai nhà cung cấp. Khi nộp, đính kèm xác nhận của giảng viên để người chấm áp dụng đúng phương án khi đối chiếu rubric. Xem [đề học phần](de-bai/De-thi-cuoi-ky-NEO-API.docx), [README](../README.md), và [hợp đồng nguồn dữ liệu](provider_contracts.md).
 
 ## 2. Người dùng và phạm vi quyết định
 

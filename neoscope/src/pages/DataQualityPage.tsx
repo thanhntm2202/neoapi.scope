@@ -1,4 +1,5 @@
 import React, { useMemo } from 'react';
+import { Activity, ShieldCheck } from 'lucide-react';
 import { PlotlyChart } from '../components/PlotlyChart';
 
 interface DataQualityPageProps {
@@ -8,6 +9,10 @@ interface DataQualityPageProps {
   manifests: any[];
   sessions: string[];
   provider: string;
+  providerStatus?: any;
+  providerProbe?: any;
+  probeLoading?: boolean;
+  onRunProviderProbe?: () => void;
 }
 
 export const DataQualityPage: React.FC<DataQualityPageProps> = ({
@@ -17,6 +22,10 @@ export const DataQualityPage: React.FC<DataQualityPageProps> = ({
   manifests,
   sessions,
   provider,
+  providerStatus,
+  providerProbe,
+  probeLoading,
+  onRunProviderProbe,
 }) => {
   const { heatmapData, totals } = useMemo(() => {
     if (!quality.length) return { heatmapData: [], totals: [] };
@@ -71,6 +80,102 @@ export const DataQualityPage: React.FC<DataQualityPageProps> = ({
         chất lượng) → CURATED Parquet. Người chấm replay toàn bộ pipeline từ RAW:{' '}
         <code>neoscope process --force</code>.
       </p>
+
+      <div className="card-panel" id="provider-probe-panel" style={{ marginBottom: 16 }}>
+        <div className="probe-header-row">
+          <div>
+            <div className="narrative-head" style={{ marginBottom: 4 }}>
+              <span className="narrative-badge">
+                <ShieldCheck size={12} style={{ marginRight: 4, verticalAlign: '-1px' }} />
+                Bảo mật &amp; Kiểm tra kết nối API
+              </span>
+              <h4 className="narrative-title">
+                Kiểm tra kết nối &amp; Tuân thủ giới hạn tần suất API (Live Probe)
+              </h4>
+            </div>
+            <p className="small-caption" style={{ margin: 0 }}>
+              Không lưu hay trả về token/secret trên trình duyệt; mọi lệnh probe thực thi qua
+              server-side với TokenBucket giới hạn tốc độ có trách nhiệm.
+            </p>
+          </div>
+          {onRunProviderProbe && (
+            <button
+              type="button"
+              id="run-provider-probe-btn"
+              className="btn btn-primary"
+              onClick={onRunProviderProbe}
+              disabled={probeLoading}
+            >
+              <Activity size={14} />
+              {probeLoading ? 'Đang chạy kiểm tra…' : 'Chạy kiểm tra kết nối (API Probe)'}
+            </button>
+          )}
+        </div>
+
+        {providerStatus && (
+          <div className="probe-status-grid">
+            <div className="probe-stat-box">
+              <div className="probe-stat-label">Nguồn chính / Dự phòng</div>
+              <div className="probe-stat-val mono">
+                {providerStatus.provider === 'NEO'
+                  ? 'VPBankS NEO API → SSI (dự phòng)'
+                  : 'SSI FastConnect v3 → NEO (dự phòng)'}
+              </div>
+              <div className="probe-stat-sub">
+                Chế độ: <code>{providerStatus.mode}</code> · Giới hạn:{' '}
+                <code>{providerStatus.rateLimitRps} req/s</code>
+              </div>
+            </div>
+            <div className="probe-stat-box">
+              <div className="probe-stat-label">SSI FastConnect Endpoints</div>
+              <div className="probe-stat-sub mono" style={{ marginTop: 2 }}>
+                REST: {providerStatus.apiUrl || 'https://api.ssi.com.vn'}
+              </div>
+              <div className="probe-stat-sub mono">
+                WS: {providerStatus.streamingUrl || 'wss://stream.ssi.com.vn/ws/v3'}
+              </div>
+            </div>
+            <div className="probe-stat-box">
+              <div className="probe-stat-label">Biến môi trường xác thực (Server-side only)</div>
+              <div className="probe-cred-row">
+                <span className={`probe-cred-pill ${providerStatus.hasClientId ? 'ok' : 'miss'}`}>
+                  SSI_CLIENT_ID: {providerStatus.hasClientId ? 'Đã nạp' : 'Thiếu'}
+                </span>
+                <span className={`probe-cred-pill ${providerStatus.hasApiKey ? 'ok' : 'miss'}`}>
+                  SSI_API_KEY: {providerStatus.hasApiKey ? 'Đã nạp' : 'Thiếu'}
+                </span>
+                <span className={`probe-cred-pill ${providerStatus.hasApiSecret ? 'ok' : 'miss'}`}>
+                  SSI_API_SECRET: {providerStatus.hasApiSecret ? 'Đã nạp' : 'Thiếu'}
+                </span>
+                <span className={`probe-cred-pill ${providerStatus.neoBackupReady ? 'ok' : 'miss'}`}>
+                  NEO Backup: {providerStatus.neoBackupReady ? 'Sẵn sàng' : 'Chưa cấu hình'}
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {providerProbe && (
+          <div
+            id="provider-probe-result"
+            className={`callout ${providerProbe.ok ? 'success' : 'warning'}`}
+            style={{ marginTop: 12, marginBottom: 0, flexDirection: 'column', gap: 4 }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+              <strong>
+                {providerProbe.ok
+                  ? `Kết nối thành công · ${providerProbe.provider}`
+                  : `Chẩn đoán an toàn · bước ${providerProbe.stage}`}
+              </strong>
+              <span className="mono" style={{ fontSize: 12 }}>
+                HTTP {providerProbe.statusCode ?? 'N/A'} · {providerProbe.latencyMs} ms ·{' '}
+                {providerProbe.checkedAtVn}
+              </span>
+            </div>
+            <div style={{ fontSize: 12.5 }}>{providerProbe.message}</div>
+          </div>
+        )}
+      </div>
 
       {heatmapData.length > 0 && (
         <>

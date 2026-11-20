@@ -8,6 +8,7 @@ export type WatchlistSortKey =
   | 'lhs'
   | 'midLast'
   | 'spreadBps'
+  | 'volatilityBps'
   | 'depthBidB'
   | 'obi'
   | 'cumVolM';
@@ -31,9 +32,12 @@ export interface WatchlistRowLike {
   lhsSeries?: number[];
   midLast?: number | null;
   spreadBps?: number | null;
+  volatilityBps?: number | null;
   depthBidB?: number | null;
   obi?: number | null;
   cumVolM?: number | null;
+  alertCount?: number;
+  rareAlertCount?: number;
 }
 
 function getTsMs(row: TapeRowLike): number {

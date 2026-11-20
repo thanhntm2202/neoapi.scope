@@ -5,7 +5,9 @@ import { marked } from 'marked';
 import {
   buildCostCurve,
   buildOrderBookFromSnap,
+  buildOrderSlicingComparison,
   buildSigmaFallback,
+  buildTopFailureCases,
   buildVolumeProfile,
   computeStaticFeatures,
   foldParamsFor,
@@ -26,6 +28,13 @@ import {
   readLiveStatus,
   REPO_ROOT,
 } from './src/server/store.js';
+import { computeSymbolSignals, type SignalBarLike } from './src/lib/symbolFilter.js';
+import { buildSessionNarrative } from './server/liquidityMath.ts';
+import { loadSettings as loadProviderSettings } from './server/config.ts';
+import {
+  inspectProviderReadiness,
+  testSsiFastConnectConnection,
+} from './server/ssiFastConnect.ts';
 
 const PORT = Number(process.env.PORT || 3000);
 const HOST = '0.0.0.0';
@@ -61,6 +70,29 @@ async function createServer() {
       dataset_mode: settings.dataset_mode,
       liveStatus: readLiveStatus(settings.provider),
     });
+  });
+
+  app.get('/api/provider/status', (req, res) => {
+    try {
+      const dataset = req.query.dataset ? String(req.query.dataset) : undefined;
+      const providerSettings = loadProviderSettings(dataset);
+      res.json(inspectProviderReadiness(providerSettings));
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'Cannot inspect provider readiness' });
+    }
+  });
+
+  app.post('/api/provider/probe', async (req, res) => {
+    try {
+      const datasetRaw = req.body?.dataset ?? req.query.dataset;
+      const dataset = datasetRaw ? String(datasetRaw) : undefined;
+      const providerSettings = loadProviderSettings(dataset);
+      const status = inspectProviderReadiness(providerSettings);
+      const probe = await testSsiFastConnectConnection(providerSettings);
+      res.json({ status, probe });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'Provider probe failed' });
+    }
   });
 
   app.get('/api/bootstrap', async (req, res) => {
@@ -153,8 +185,9 @@ async function createServer() {
       const dataset = req.query.dataset ? String(req.query.dataset) : undefined;
       const settings = loadSettings(dataset);
       const sessions = listSessionDirs(settings.dataset_mode).map((d) => d.date);
+      const hasSymbolsParam = req.query.symbols !== undefined;
       const symbolsParam = String(req.query.symbols || '');
-      const selectedSymbols = symbolsParam
+      const selectedSymbols = hasSymbolsParam
         ? symbolsParam.split(',').map((s) => s.trim()).filter(Boolean)
         : settings.allSymbols;
       const symSet = new Set(selectedSymbols);
@@ -211,8 +244,9 @@ async function createServer() {
         return res.status(404).json({ error: `Unknown session ${sessionDate}` });
       }
 
+      const hasSymbolsParam = req.query.symbols !== undefined;
       const symbolsParam = String(req.query.symbols || '');
-      const selectedSymbols = symbolsParam
+      const selectedSymbols = hasSymbolsParam
         ? symbolsParam.split(',').map((s) => s.trim()).filter(Boolean)
         : settings.allSymbols;
       const symSet = new Set(selectedSymbols);
@@ -227,6 +261,19 @@ async function createServer() {
       const daySnaps = snapsAll.filter((s) => symSet.has(s.symbol));
       const dayLhs = barsLhsAll.filter((b) => b.session_date === sessionDate && symSet.has(b.symbol));
       const dayLhsAllSyms = barsLhsAll.filter((b) => b.session_date === sessionDate);
+      const rawSignalBars = dayLhsAllSyms.length > 0 ? dayLhsAllSyms : await dataCache.getBars(settings, sessionDate);
+      const signalBars = (rawSignalBars as SignalBarLike[]).filter((b) => typeof b.symbol === 'string');
+      const dayAlertsAllSyms = alertsAll.filter((a) => a.session_date === sessionDate);
+      const groupMap: Record<string, 'large' | 'thin'> = {};
+      for (const sym of settings.allSymbols) {
+        groupMap[sym] = groupOf(settings, sym);
+      }
+      const symbolSignals = computeSymbolSignals(
+        signalBars,
+        dayAlertsAllSyms,
+        settings.allSymbols,
+        groupMap,
+      );
 
       // Previous session for KPI deltas
       const sessIdx = sessions.indexOf(sessionDate);
@@ -285,16 +332,30 @@ async function createServer() {
 
       const alertCut = alertsAll.filter((a) => a.session_date === sessionDate && symSet.has(a.symbol));
       const rareCount = alertCut.filter((a) => a.priority === 'P1' || a.priority === 'P2').length;
+      const alertTypes: Record<string, number> = {};
+      for (const a of alertCut) {
+        const t = String(a.type || 'OTHER');
+        alertTypes[t] = (alertTypes[t] || 0) + 1;
+      }
 
       const alertPulse = [...alertCut]
         .sort((a, b) => b.ts_ms - a.ts_ms)
         .slice(0, 6);
+
+      const signalMap = new Map(symbolSignals.map((s) => [s.symbol, s]));
+      const latestLhsRowsBySym = new Map<string, Record<string, unknown>>();
+      for (const r of sortedDayLhs) {
+        if (r.lhs !== null && Number.isFinite(r.lhs)) {
+          latestLhsRowsBySym.set(r.symbol, r);
+        }
+      }
 
       const watchlist = Array.from(latestBySymbol.values())
         .map((last) => {
           const sym = last.symbol;
           const db = depthBidMap.get(sym);
           const midVal = midMap.get(sym) ?? null;
+          const sig = signalMap.get(sym);
           return {
             symbol: sym,
             groupLabel: groupOf(settings, sym) === 'large' ? 'VN30 lớn' : 'Midcap mỏng',
@@ -302,12 +363,34 @@ async function createServer() {
             lhsSeries: lhsSeriesBySym.get(sym) ?? [],
             midLast: midVal,
             spreadBps: spreadMap.get(sym) ?? null,
+            volatilityBps: sig?.volatilityBps ?? null,
             depthBidB: db !== undefined ? db / 1e9 : null,
             obi: obiMap.get(sym) ?? null,
             cumVolM: last.cum_vol !== null && Number.isFinite(last.cum_vol) ? last.cum_vol / 1e6 : null,
+            alertCount: sig?.alertCount ?? 0,
+            rareAlertCount: sig?.rareAlertCount ?? 0,
           };
         })
         .sort((a, b) => (b.midLast ?? -Infinity) - (a.midLast ?? -Infinity));
+
+      const narrative = buildSessionNarrative({
+        session: sessionDate,
+        mode: settings.mode,
+        watchlistRows: watchlist.map((w) => ({
+          symbol: w.symbol,
+          groupLabel: w.groupLabel,
+          lhsSeries: w.lhsSeries,
+          mid: w.midLast,
+          spreadBps: w.spreadBps,
+          depthBidB: w.depthBidB,
+          obi: w.obi,
+          cumVolM: w.cumVolM,
+        })),
+        lhsRanking: Array.from(latestLhsRowsBySym.values()),
+        alertCount: alertCut.length,
+        rareCount,
+        alertTypes,
+      });
 
       const availableTapeSymbols = Array.from(latestBySymbol.keys()).sort();
 
@@ -325,12 +408,14 @@ async function createServer() {
           alertCount: alertCut.length,
           rareCount,
         },
+        narrative,
         alertPulse,
         dayAlerts: alertCut,
         indices: indicesAll.filter((r) => r.index_code === 'VNINDEX'),
         barsLhs: dayLhsAllSyms,
         watchlist,
         availableTapeSymbols,
+        symbolSignals,
       });
     } catch (err: any) {
       console.error('[session error]', err);
@@ -477,6 +562,21 @@ async function createServer() {
           settings,
           hasFoldModel: false,
         });
+        const slicingComparison = buildOrderSlicingComparison({
+          mid,
+          side,
+          qty,
+          prices: feat.prices,
+          vols: feat.vols,
+          hs_bps: feat.hs_bps,
+          obi_now: feat.obi_now,
+          v_rate: null,
+          sigma: null,
+          kappa: 0,
+          y_risk: 1.0,
+          settings,
+          hasFoldModel: false,
+        });
         return res.json({
           hasFoldModel: false,
           foldNote:
@@ -489,6 +589,7 @@ async function createServer() {
           costs,
           ladder: ladderPayload,
           costCurve,
+          slicingComparison,
           full: null,
           waterfallParts: null,
           benchmarks: [],
@@ -555,6 +656,21 @@ async function createServer() {
         settings,
         hasFoldModel: true,
       });
+      const slicingComparison = buildOrderSlicingComparison({
+        mid,
+        side,
+        qty,
+        prices: feat.prices,
+        vols: feat.vols,
+        hs_bps: feat.hs_bps,
+        obi_now: feat.obi_now,
+        v_rate,
+        sigma,
+        kappa: Number(fpRow.kappa_bps_per_s),
+        y_risk: Number(fpRow.y_cov),
+        settings,
+        hasFoldModel: true,
+      });
 
       res.json({
         hasFoldModel: true,
@@ -566,6 +682,7 @@ async function createServer() {
         costs,
         ladder: ladderPayload,
         costCurve,
+        slicingComparison,
         full: {
           e_is_bps: full.e_is_bps,
           sigma_is_bps: full.sigma_is_bps,
@@ -690,7 +807,13 @@ async function createServer() {
           recover_s: r.recover_s,
         }));
 
-      res.json({ fullPreds, resilience: resRows });
+      const failureCases = buildTopFailureCases(
+        predictions,
+        settings.execution.horizon_s,
+        10,
+      );
+
+      res.json({ fullPreds, resilience: resRows, failureCases });
     } catch (err: any) {
       res.status(500).json({ error: err?.message || 'Internal server error' });
     }
@@ -720,8 +843,11 @@ async function createServer() {
   } else {
     const distDir = path.join(REPO_ROOT, 'dist');
     app.use(express.static(distDir));
-    app.get('*', (_req, res) => {
-      res.sendFile(path.join(distDir, 'index.html'));
+    app.use((req, res, next) => {
+      if (req.method === 'GET' && !req.path.startsWith('/api')) {
+        return res.sendFile(path.join(distDir, 'index.html'));
+      }
+      return next();
     });
   }
 

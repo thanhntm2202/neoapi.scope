@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { PlotlyChart } from '../components/PlotlyChart';
-import { C_ACCENT, C_BAD, C_GOOD, C_LARGE, C_THIN, MODEL_COLORS } from '../lib/format';
+import { C_ACCENT, C_BAD, C_GOOD, C_LARGE, C_THIN, fmtNum, fmtVnd, MODEL_COLORS } from '../lib/format';
 
 interface ValidationPageProps {
   summary: any;
@@ -15,17 +15,29 @@ export const ValidationPage: React.FC<ValidationPageProps> = ({ summary, results
   const ic: any[] = results?.lhs_ic || [];
   const obi: any[] = results?.obi_direction || [];
 
-  const [extra, setExtra] = useState<{ fullPreds: any[]; resilience: any[] }>({
+  const [extra, setExtra] = useState<{
+    fullPreds: any[];
+    resilience: any[];
+    failureCases: any | null;
+  }>({
     fullPreds: [],
     resilience: [],
+    failureCases: null,
   });
+  const [failureFilter, setFailureFilter] = useState<'all' | 'outside_pi'>('all');
 
   useEffect(() => {
     let cancelled = false;
     fetch('/api/validation/extra')
       .then((r) => r.json())
       .then((d) => {
-        if (!cancelled) setExtra({ fullPreds: d.fullPreds || [], resilience: d.resilience || [] });
+        if (!cancelled) {
+          setExtra({
+            fullPreds: d.fullPreds || [],
+            resilience: d.resilience || [],
+            failureCases: d.failureCases || null,
+          });
+        }
       })
       .catch(() => {});
     return () => {
@@ -572,16 +584,183 @@ export const ValidationPage: React.FC<ValidationPageProps> = ({ summary, results
             alt="Phân phối thời gian phục hồi độ sâu sau các nhịp khối lượng cao."
           />
           {summary?.resilience && (
-            <>
-              <pre className="json-box">{JSON.stringify(summary.resilience, null, 2)}</pre>
-              <div className="small-caption">
-                Median thời gian phục hồi độ sâu sau cú sốc khối lượng theo nhóm — nhóm midcap mỏng
-                phục hồi chậm/kém hơn là rủi ro thanh khoản động đo được.
+            <div className="card-panel" id="resilience-comparison-card" style={{ marginTop: 12 }}>
+              <div className="narrative-head" style={{ marginBottom: 10 }}>
+                <span className="narrative-badge">Phục hồi độ sâu sổ lệnh</span>
+                <h4 className="narrative-title">
+                  So sánh khả năng phục hồi thanh khoản sau cú sốc khối lượng: VN30 lớn vs Midcap mỏng
+                </h4>
               </div>
-            </>
+              <div className="table-wrap">
+                <table className="neo-table">
+                  <thead>
+                    <tr>
+                      <th>Nhóm cổ phiếu</th>
+                      <th className="num">Số episode cú sốc</th>
+                      <th className="num">Median phục hồi (giây)</th>
+                      <th className="num">P90 phục hồi (giây)</th>
+                      <th className="num">Tỷ lệ chưa phục hồi (%)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(
+                      [
+                        { key: 'large', label: 'VN30 lớn', badgeClass: 'large' },
+                        { key: 'thin', label: 'Midcap mỏng', badgeClass: 'thin' },
+                      ] as const
+                    )
+                      .filter((item) => summary.resilience[item.key])
+                      .map((item) => {
+                        const r = summary.resilience[item.key];
+                        return (
+                          <tr key={item.key}>
+                            <td>
+                              <span className={`resilience-group-pill ${item.badgeClass}`}>
+                                {item.label}
+                              </span>
+                            </td>
+                            <td className="num">{Number(r.n_episodes ?? 0).toLocaleString('en-US')}</td>
+                            <td className="num">{Number(r.median_recover_s ?? 0).toFixed(1)}s</td>
+                            <td className="num">{Number(r.p90_recover_s ?? 0).toFixed(1)}s</td>
+                            <td className="num">
+                              {(Number(r.unrecovered_frac ?? 0) * 100).toFixed(2)}%
+                            </td>
+                          </tr>
+                        );
+                      })}
+                  </tbody>
+                </table>
+              </div>
+              <div className="small-caption" style={{ marginBottom: 0 }}>
+                Median thời gian phục hồi độ sâu sau cú sốc khối lượng theo nhóm — nhóm midcap mỏng
+                có tỷ lệ episode chưa phục hồi cao hơn là rủi ro thanh khoản động đo được.
+              </div>
+            </div>
           )}
         </div>
       )}
+
+      {extra.failureCases?.cases?.length > 0 && (() => {
+        const fc = extra.failureCases;
+        const allCases: any[] = fc.cases || [];
+        const outsideCount = allCases.filter((c) => c.outsidePi).length;
+        const shownCases =
+          failureFilter === 'outside_pi'
+            ? allCases.filter((c) => c.outsidePi)
+            : allCases;
+        return (
+          <div className="card-panel" id="failure-cases-card" style={{ marginTop: 18 }}>
+            <div className="failure-header-row">
+              <div>
+                <div className="narrative-head" style={{ marginBottom: 4 }}>
+                  <span className="narrative-badge">Phân tích sai số cực trị · OOS</span>
+                  <h4 className="narrative-title">
+                    Top {allCases.length} ca dự báo sai số lớn nhất (Failure Case Explorer)
+                  </h4>
+                </div>
+                <div className="small-caption" style={{ margin: 0 }}>
+                  Tổng mẫu OOS: <strong>{Number(fc.totalOrders || 0).toLocaleString('en-US')}</strong>{' '}
+                  lệnh · Ngoài khoảng dự báo 90%:{' '}
+                  <strong>{Number(fc.outsidePiCount || 0).toLocaleString('en-US')}</strong> ca ·{' '}
+                  <strong>{fc.beyondBookTopCount}/{allCases.length}</strong> ca sai số đỉnh nằm ở
+                  chế độ vượt sổ hiển thị.
+                </div>
+              </div>
+              <div className="failure-filter-row" role="group" aria-label="Lọc ca sai số">
+                <button
+                  type="button"
+                  id="failure-filter-all"
+                  className={`preset-btn ${failureFilter === 'all' ? 'active' : ''}`}
+                  onClick={() => setFailureFilter('all')}
+                >
+                  Tất cả ({allCases.length})
+                </button>
+                <button
+                  type="button"
+                  id="failure-filter-pi"
+                  className={`preset-btn ${failureFilter === 'outside_pi' ? 'active' : ''}`}
+                  onClick={() => setFailureFilter('outside_pi')}
+                >
+                  Ngoài PI 90% ({outsideCount})
+                </button>
+              </div>
+            </div>
+
+            <div className="table-wrap">
+              <table className="neo-table compact">
+                <thead>
+                  <tr>
+                    <th>Mã · Nhóm</th>
+                    <th>Phiên · Fold</th>
+                    <th>Lệnh · Quy mô</th>
+                    <th className="num">Phủ sổ</th>
+                    <th className="num">Dự báo (bps)</th>
+                    <th className="num">Thực tế (bps)</th>
+                    <th className="num">Sai số |Δ|</th>
+                    <th>Chẩn đoán nguyên nhân</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {shownCases.map((c) => {
+                    const grpLabel = c.group === 'large' ? 'VN30' : 'Midcap';
+                    return (
+                      <tr key={c.orderId}>
+                        <td style={{ whiteSpace: 'nowrap' }}>
+                          <strong>{c.symbol}</strong>{' '}
+                          <span
+                            className={`resilience-group-pill ${
+                              c.group === 'large' ? 'large' : 'thin'
+                            }`}
+                            style={{ padding: '1px 5px', fontSize: 10 }}
+                          >
+                            {grpLabel}
+                          </span>
+                        </td>
+                        <td className="mono" style={{ whiteSpace: 'nowrap' }}>
+                          {c.sessionDate.slice(5)} · F{c.fold}
+                        </td>
+                        <td style={{ whiteSpace: 'nowrap' }}>
+                          <span style={{ color: c.side === -1 ? '#ff8a80' : '#4dd0c1', fontWeight: 700 }}>
+                            {c.side === -1 ? 'BÁN' : 'MUA'}
+                          </span>{' '}
+                          · {fmtVnd(c.notionalVnd)}
+                        </td>
+                        <td className="num">{fmtNum(c.coveragePct, 0)}%</td>
+                        <td className="num">{fmtNum(c.eIsBps, 1)}</td>
+                        <td className="num">
+                          <strong>{fmtNum(c.realizedIsBps, 1)}</strong>
+                        </td>
+                        <td className="num" style={{ color: '#ff8a80', whiteSpace: 'nowrap' }}>
+                          <strong>{fmtNum(c.absErrorBps, 1)}</strong> bps
+                        </td>
+                        <td>
+                          <div className="failure-reason-list">
+                            {(c.reasons || []).map((reason: string, idx: number) => (
+                              <span
+                                key={idx}
+                                className={`failure-reason-tag ${
+                                  reason.includes('PI 90%') ? 'pi-out' : ''
+                                }`}
+                              >
+                                {reason}
+                              </span>
+                            ))}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div className="small-caption" style={{ marginBottom: 0 }}>
+              Việc công khai các ca sai số cực trị giúp xác định ranh giới tin cậy: mô hình{' '}
+              <code>full</code> hoạt động tốt với thanh khoản thường nhưng vẫn chịu sai số đuôi khi
+              lệnh midcap vượt sâu 3 mức giá và có phần dư kéo dài tới hết chân trời 180s.
+            </div>
+          </div>
+        );
+      })()}
 
       <div className="card-panel" style={{ marginTop: 18 }}>
         <h4 style={{ margin: '0 0 8px 0', color: '#e8f0fc' }}>

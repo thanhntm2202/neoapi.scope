@@ -46,11 +46,11 @@ The explicit mode flag takes precedence over a machine-level `NEOSCOPE_MODE`, so
 
 SSI FastConnect v3 is the primary live provider. Create an SSI Market Data key and add `SSI_CLIENT_ID`, `SSI_API_KEY`, and `SSI_API_SECRET` to `.env`. Set `NEOSCOPE_MODE=LIVE`; `NEOSCOPE_PROVIDER=SSI` is the default.
 
-NEO is the backup source. Add `NEO_USERNAME` and `NEO_PASSWORD` to `.env`; `NEO_DEVICE_ID` is optional. If SSI is unavailable, stop the recorder, set `NEOSCOPE_PROVIDER=NEO`, and restart. Return to SSI by setting `NEOSCOPE_PROVIDER=SSI`. Selection is explicit; the application never silently switches providers within a session. This preserves a visible source boundary and avoids combining vendor feeds with different field and timing semantics.
+The instructor confirmed that SSI may fully replace NEO when NEO API is unavailable. NeoScope therefore uses SSI as its default live source and retains NEO as an optional alternative. Add `NEO_USERNAME` and `NEO_PASSWORD` to `.env` to select NEO; `NEO_DEVICE_ID` is optional. If a provider is unavailable, stop its recorder, select the other provider, and restart. Selection is explicit; the application never silently switches providers within a session. This preserves a visible source boundary and avoids combining vendor feeds with different field and timing semantics.
 
 ### Course requirement and approved source exception
 
-The supplied course brief names NEO API as the default core source and permits SSI as a supplement. The instructor has approved SSI FastConnect as a complete substitute for this project, so SSI is the primary live source and VPBankS NEO remains an optional backup adapter. Attach the instructor's approval evidence to the submission so the evaluator can apply the approved source choice when reading the rubric. See the [course brief](docs/de-bai/De-thi-cuoi-ky-NEO-API.docx) and [as-built product dossier](docs/as-built-product-dossier.md).
+The supplied course brief names NEO API as the default core source and explicitly allows SSI FastConnect to replace it completely if NEO API is unavailable; the instructor confirmed this interpretation. NeoScope uses SSI as its default live source, while retaining NEO as an optional provider. Attach the instructor's confirmation to the submission for rubric review. See the [course brief](docs/de-bai/De-thi-cuoi-ky-NEO-API.docx) and [as-built product dossier](docs/as-built-product-dossier.md).
 
 Start the selected source during a market session:
 

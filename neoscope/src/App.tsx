@@ -21,6 +21,16 @@ import {
   StatusStrip,
 } from './components/ThemeParts';
 import { fmtNum } from './lib/format';
+import {
+  computeMarkerPercent,
+  defaultThresholdForMode,
+  filterSymbolsBySignal,
+  getSignalRange,
+  getSliderBounds,
+  SignalFilterMode,
+  snapThresholdToStep,
+  SymbolSignal,
+} from './lib/symbolFilter';
 import { filterSymbolsByQuery } from './lib/tradingview';
 import { AlertsPage } from './pages/AlertsPage';
 import { DataQualityPage } from './pages/DataQualityPage';
@@ -84,6 +94,7 @@ export function App() {
   const [sessionData, setSessionData] = useState<any>(null);
   const [sessionLoading, setSessionLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [refreshDone, setRefreshDone] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [liveStatus, setLiveStatus] = useState<any>(null);
 
@@ -94,12 +105,22 @@ export function App() {
     type?: string;
   } | null>(null);
   const [preferredSym, setPreferredSym] = useState<string | null>(null);
+  const [preferredExecTsMs, setPreferredExecTsMs] = useState<number | null>(null);
   const [preferredTapeSym, setPreferredTapeSym] = useState<string | null>(null);
+  const [providerStatus, setProviderStatus] = useState<any>(null);
+  const [providerProbe, setProviderProbe] = useState<any>(null);
+  const [probeLoading, setProbeLoading] = useState(false);
 
   // TradingView Quick Symbol Palette (/ or Cmd/Ctrl+K)
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState('');
+  const [paletteIdx, setPaletteIdx] = useState(0);
   const paletteInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Sidebar Signal Filter (Volatility & LHS)
+  const [signalMode, setSignalMode] = useState<SignalFilterMode>('none');
+  const [signalThreshold, setSignalThreshold] = useState<number>(20);
+  const [symbolSignals, setSymbolSignals] = useState<SymbolSignal[]>([]);
 
   const loadBootstrap = useCallback(async (dsOverride?: string) => {
     try {
@@ -135,6 +156,41 @@ export function App() {
   }, [loadBootstrap]);
 
   useEffect(() => {
+    if (!boot) return;
+    let cancelled = false;
+    const ds = boot?.settings?.dataset_mode || dataset || '';
+    const qs = ds ? `?dataset=${encodeURIComponent(ds)}` : '';
+    fetch(`/api/provider/status${qs}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!cancelled && d) setProviderStatus(d);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [boot, dataset]);
+
+  const handleRunProviderProbe = useCallback(async () => {
+    setProbeLoading(true);
+    try {
+      const ds = boot?.settings?.dataset_mode || dataset || '';
+      const r = await fetch('/api/provider/probe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dataset: ds }),
+      });
+      const d = await r.json();
+      if (r.ok) {
+        if (d.status) setProviderStatus(d.status);
+        if (d.probe) setProviderProbe(d.probe);
+      }
+    } finally {
+      setProbeLoading(false);
+    }
+  }, [boot?.settings?.dataset_mode, dataset]);
+
+  useEffect(() => {
     if (!session || !boot) {
       if (boot && !session) setSessionData(null);
       return;
@@ -143,12 +199,17 @@ export function App() {
     setSessionLoading(true);
     const params = new URLSearchParams();
     if (dataset) params.set('dataset', dataset);
-    if (symbols.length) params.set('symbols', symbols.join(','));
+    params.set('symbols', symbols.join(','));
     const qs = params.toString() ? `?${params.toString()}` : '';
     fetch(`/api/session/${encodeURIComponent(session)}${qs}`)
       .then((r) => r.json())
       .then((d) => {
-        if (!cancelled) setSessionData(d);
+        if (!cancelled) {
+          setSessionData(d);
+          if (Array.isArray(d?.symbolSignals)) {
+            setSymbolSignals(d.symbolSignals);
+          }
+        }
       })
       .catch(() => {})
       .finally(() => {
@@ -201,15 +262,31 @@ export function App() {
   useEffect(() => {
     if (paletteOpen) {
       setPaletteQuery('');
+      setPaletteIdx(0);
       window.setTimeout(() => paletteInputRef.current?.focus(), 20);
     }
   }, [paletteOpen]);
 
+  useEffect(() => {
+    setPaletteIdx(0);
+  }, [paletteQuery]);
+
+  useEffect(() => {
+    if (!paletteOpen) return;
+    const el = document.querySelector('.tv-palette-row.highlighted');
+    if (el instanceof HTMLElement) {
+      el.scrollIntoView({ block: 'nearest' });
+    }
+  }, [paletteOpen, paletteIdx]);
+
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
+    setRefreshDone(false);
     try {
       await fetch('/api/refresh', { method: 'POST' });
       await loadBootstrap(dataset);
+      setRefreshDone(true);
+      window.setTimeout(() => setRefreshDone(false), 1400);
     } finally {
       setRefreshing(false);
     }
@@ -238,10 +315,12 @@ export function App() {
     setDataset(newDs);
     setSession('');
     setSessionData(null);
+    setSymbolSignals([]);
     await loadBootstrap(newDs);
   };
 
   const toggleSymbol = (sym: string) => {
+    setSignalMode('none');
     setSymbols((prev) =>
       prev.includes(sym) ? prev.filter((x) => x !== sym) : [...prev, sym],
     );
@@ -261,6 +340,74 @@ export function App() {
   const largeSet = useMemo(() => new Set<string>(largeList), [largeList]);
   const allSymsList: string[] = useMemo(() => boot?.allSymbols || [], [boot]);
 
+  const signalBySymbol = useMemo(() => {
+    const m = new Map<string, SymbolSignal>();
+    for (const s of symbolSignals) m.set(s.symbol, s);
+    return m;
+  }, [symbolSignals]);
+
+  const activeSignalRange = useMemo(() => {
+    if (signalMode === 'high_vol') return getSignalRange(symbolSignals, 'volatilityBps');
+    if (signalMode === 'high_lhs' || signalMode === 'low_lhs') {
+      return getSignalRange(symbolSignals, 'lhsLast');
+    }
+    return null;
+  }, [signalMode, symbolSignals]);
+
+  const sliderBounds = useMemo(
+    () => getSliderBounds(signalMode, activeSignalRange),
+    [signalMode, activeSignalRange],
+  );
+
+  const signalMarkers = useMemo(() => {
+    if (signalMode === 'none' || !activeSignalRange) return null;
+    const metric = signalMode === 'high_vol' ? 'volatilityBps' : 'lhsLast';
+    const { min, max } = sliderBounds;
+    const points = symbolSignals
+      .map((s) => {
+        const val = s[metric];
+        if (typeof val !== 'number' || !Number.isFinite(val)) return null;
+        return {
+          symbol: s.symbol,
+          group: s.group,
+          value: val,
+          pct: computeMarkerPercent(val, min, max),
+        };
+      })
+      .filter((p): p is { symbol: string; group: 'large' | 'thin'; value: number; pct: number } => p !== null);
+
+    return {
+      minPct: computeMarkerPercent(activeSignalRange.min, min, max),
+      maxPct: computeMarkerPercent(activeSignalRange.max, min, max),
+      meanPct: computeMarkerPercent(activeSignalRange.mean, min, max),
+      medianPct: computeMarkerPercent(activeSignalRange.median, min, max),
+      snappedMean: snapThresholdToStep(activeSignalRange.mean, sliderBounds),
+      snappedMedian: snapThresholdToStep(activeSignalRange.median, sliderBounds),
+      points,
+    };
+  }, [signalMode, activeSignalRange, sliderBounds, symbolSignals]);
+
+  // Keep active symbols synced when a Volatility or LHS signal filter is active
+  useEffect(() => {
+    if (signalMode === 'none' || !allSymsList.length || !symbolSignals.length) return;
+    const next = filterSymbolsBySignal(allSymsList, symbolSignals, signalMode, signalThreshold);
+    setSymbols((prev) =>
+      prev.length === next.length && prev.every((s, idx) => s === next[idx]) ? prev : next,
+    );
+  }, [signalMode, signalThreshold, symbolSignals, allSymsList]);
+
+  const handleSelectSignalMode = (nextMode: SignalFilterMode) => {
+    setSignalMode(nextMode);
+    if (nextMode === 'none') {
+      if (!symbols.length && allSymsList.length) {
+        setSymbols(allSymsList);
+      }
+      return;
+    }
+    const defThreshold = defaultThresholdForMode(nextMode, symbolSignals);
+    setSignalThreshold(defThreshold);
+  };
+
   const activePreset = useMemo(() => {
     if (!allSymsList.length) return 'custom';
     const selSet = new Set(symbols);
@@ -273,6 +420,7 @@ export function App() {
   }, [symbols, allSymsList, largeList, thinList]);
 
   const applyPreset = (preset: 'all' | 'large' | 'thin') => {
+    setSignalMode('none');
     if (preset === 'all') {
       setSymbols(allSymsList);
     } else if (preset === 'large') {
@@ -405,6 +553,7 @@ export function App() {
                 key={item.id}
                 type="button"
                 className={`nav-item ${page === item.id ? 'active' : ''}`}
+                aria-current={page === item.id ? 'page' : undefined}
                 onClick={() => {
                   setPage(item.id);
                   setMobileMenuOpen(false);
@@ -426,6 +575,7 @@ export function App() {
                 key={item.id}
                 type="button"
                 className={`nav-item ${page === item.id ? 'active' : ''}`}
+                aria-current={page === item.id ? 'page' : undefined}
                 onClick={() => {
                   setPage(item.id);
                   setMobileMenuOpen(false);
@@ -494,11 +644,17 @@ export function App() {
           </div>
 
           <div>
-            <label className="field-label">Mã theo dõi</label>
+            <div className="field-label-row">
+              <label className="field-label">Mã theo dõi</label>
+              <span className="field-count" aria-live="polite">
+                {symbols.length}/{allSymsList.length}
+              </span>
+            </div>
             <div className="preset-btn-row" role="group" aria-label="Bộ chọn nhanh nhóm mã">
               <button
                 type="button"
                 className={`preset-btn ${activePreset === 'all' ? 'active' : ''}`}
+                aria-pressed={activePreset === 'all'}
                 onClick={() => applyPreset('all')}
               >
                 Tất cả
@@ -506,6 +662,7 @@ export function App() {
               <button
                 type="button"
                 className={`preset-btn ${activePreset === 'large' ? 'active' : ''}`}
+                aria-pressed={activePreset === 'large'}
                 onClick={() => applyPreset('large')}
               >
                 VN30 lớn
@@ -513,6 +670,7 @@ export function App() {
               <button
                 type="button"
                 className={`preset-btn ${activePreset === 'thin' ? 'active' : ''}`}
+                aria-pressed={activePreset === 'thin'}
                 onClick={() => applyPreset('thin')}
               >
                 Midcap mỏng
@@ -522,11 +680,19 @@ export function App() {
               {allSymsList.map((sym: string) => {
                 const isSelected = symbols.includes(sym);
                 const grpClass = largeSet.has(sym) ? 'large' : 'thin';
+                const sig = signalBySymbol.get(sym);
+                const isDimmed = signalMode !== 'none' && !isSelected;
+                const tipParts = [sym];
+                if (sig?.volatilityBps != null) tipParts.push(`σ 1m: ${sig.volatilityBps.toFixed(1)} bps`);
+                if (sig?.lhsLast != null) tipParts.push(`LHS: ${sig.lhsLast.toFixed(1)}/100`);
+                if (sig && sig.alertCount > 0) tipParts.push(`Cảnh báo: ${sig.alertCount} (${sig.rareAlertCount} P1/P2)`);
                 return (
                   <button
                     key={sym}
                     type="button"
-                    className={`sym-chip ${isSelected ? `selected ${grpClass}` : ''}`}
+                    className={`sym-chip ${isSelected ? `selected ${grpClass}` : ''} ${isDimmed ? 'dimmed' : ''}`}
+                    aria-pressed={isSelected}
+                    title={tipParts.join(' · ')}
                     onClick={() => toggleSymbol(sym)}
                   >
                     {sym}
@@ -534,6 +700,183 @@ export function App() {
                 );
               })}
             </div>
+          </div>
+
+          <div className="signal-filter-box">
+            <div className="field-label-row" style={{ marginBottom: 0 }}>
+              <label className="field-label" style={{ marginBottom: 0 }}>
+                Lọc tín hiệu (Vol / LHS)
+              </label>
+              {signalMode !== 'none' && (
+                <span className="field-count" aria-live="polite">
+                  Khớp {symbols.length}/{allSymsList.length}
+                </span>
+              )}
+            </div>
+
+            <div className="signal-btn-grid" role="group" aria-label="Bộ lọc tín hiệu biến động và thanh khoản">
+              <button
+                type="button"
+                className={`signal-btn ${signalMode === 'none' ? 'active' : ''}`}
+                aria-pressed={signalMode === 'none'}
+                onClick={() => handleSelectSignalMode('none')}
+              >
+                Thủ công
+              </button>
+              <button
+                type="button"
+                className={`signal-btn ${signalMode === 'high_vol' ? 'active vol' : ''}`}
+                aria-pressed={signalMode === 'high_vol'}
+                onClick={() => handleSelectSignalMode('high_vol')}
+                disabled={!symbolSignals.length}
+              >
+                Biến động cao
+              </button>
+              <button
+                type="button"
+                className={`signal-btn ${signalMode === 'high_lhs' ? 'active lhs-hi' : ''}`}
+                aria-pressed={signalMode === 'high_lhs'}
+                onClick={() => handleSelectSignalMode('high_lhs')}
+                disabled={!symbolSignals.length}
+              >
+                LHS cao
+              </button>
+              <button
+                type="button"
+                className={`signal-btn ${signalMode === 'low_lhs' ? 'active lhs-lo' : ''}`}
+                aria-pressed={signalMode === 'low_lhs'}
+                onClick={() => handleSelectSignalMode('low_lhs')}
+                disabled={!symbolSignals.length}
+              >
+                LHS thấp
+              </button>
+            </div>
+
+            {signalMode !== 'none' && (
+              <div className="signal-slider-wrap">
+                <div className="signal-slider-head">
+                  <label htmlFor="signal-threshold-slider">
+                    {signalMode === 'high_vol'
+                      ? 'Độ lệch chuẩn 1m (σ)'
+                      : signalMode === 'high_lhs'
+                        ? 'LHS tối thiểu'
+                        : 'LHS tối đa'}
+                  </label>
+                  <span className="signal-slider-val">
+                    {signalMode === 'high_vol'
+                      ? `≥ ${signalThreshold} bps`
+                      : signalMode === 'high_lhs'
+                        ? `≥ ${signalThreshold.toFixed(1)}`
+                        : `≤ ${signalThreshold.toFixed(1)}`}
+                  </span>
+                </div>
+
+                {activeSignalRange && signalMarkers && (
+                  <>
+                    <div className="signal-stat-chips" role="group" aria-label="Điểm tham chiếu trung bình và trung vị">
+                      <button
+                        type="button"
+                        className={`signal-stat-chip mean ${signalThreshold === signalMarkers.snappedMean ? 'active' : ''}`}
+                        onClick={() => setSignalThreshold(signalMarkers.snappedMean)}
+                        title={`Nhấn để căn ngưỡng theo giá trị trung bình phiên (${activeSignalRange.mean.toFixed(1)}${signalMode === 'high_vol' ? ' bps' : ''})`}
+                      >
+                        <span className="signal-stat-swatch mean" aria-hidden="true" />
+                        <span>
+                          TB: <strong>{activeSignalRange.mean.toFixed(1)}</strong>
+                          {signalMode === 'high_vol' ? ' bps' : ''}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        className={`signal-stat-chip median ${signalThreshold === signalMarkers.snappedMedian ? 'active' : ''}`}
+                        onClick={() => setSignalThreshold(signalMarkers.snappedMedian)}
+                        title={`Nhấn để căn ngưỡng theo trung vị phiên (${activeSignalRange.median.toFixed(1)}${signalMode === 'high_vol' ? ' bps' : ''})`}
+                      >
+                        <span className="signal-stat-swatch median" aria-hidden="true" />
+                        <span>
+                          Med: <strong>{activeSignalRange.median.toFixed(1)}</strong>
+                          {signalMode === 'high_vol' ? ' bps' : ''}
+                        </span>
+                      </button>
+                    </div>
+
+                    <div className="signal-marker-rail" aria-hidden="false">
+                      <div className="signal-rail-inner">
+                        <div className="signal-rail-track" />
+                        <div
+                          className="signal-rail-band"
+                          style={{
+                            left: `${signalMarkers.minPct}%`,
+                            width: `${Math.max(2, signalMarkers.maxPct - signalMarkers.minPct)}%`,
+                          }}
+                        />
+                        {signalMarkers.points.map((pt) => {
+                          const isMatched = symbols.includes(pt.symbol);
+                          return (
+                            <span
+                              key={pt.symbol}
+                              className={`signal-sym-tick ${pt.group} ${isMatched ? 'matched' : ''}`}
+                              style={{ left: `${pt.pct}%` }}
+                              title={`${pt.symbol}: ${pt.value.toFixed(1)}${signalMode === 'high_vol' ? ' bps' : ''}`}
+                            />
+                          );
+                        })}
+                        <button
+                          type="button"
+                          data-marker="mean"
+                          className={`signal-rail-marker mean ${signalThreshold === signalMarkers.snappedMean ? 'active' : ''}`}
+                          style={{ left: `${signalMarkers.meanPct}%` }}
+                          onClick={() => setSignalThreshold(signalMarkers.snappedMean)}
+                          aria-label={`Căn theo trung bình ${activeSignalRange.mean.toFixed(1)}`}
+                          title={`Trung bình (Mean): ${activeSignalRange.mean.toFixed(1)}${signalMode === 'high_vol' ? ' bps' : ''} — nhấn để căn`}
+                        >
+                          <span className="signal-marker-pin" />
+                        </button>
+                        <button
+                          type="button"
+                          data-marker="median"
+                          className={`signal-rail-marker median ${signalThreshold === signalMarkers.snappedMedian ? 'active' : ''}`}
+                          style={{ left: `${signalMarkers.medianPct}%` }}
+                          onClick={() => setSignalThreshold(signalMarkers.snappedMedian)}
+                          aria-label={`Căn theo trung vị ${activeSignalRange.median.toFixed(1)}`}
+                          title={`Trung vị (Median): ${activeSignalRange.median.toFixed(1)}${signalMode === 'high_vol' ? ' bps' : ''} — nhấn để căn`}
+                        >
+                          <span className="signal-marker-pin" />
+                        </button>
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                <input
+                  id="signal-threshold-slider"
+                  type="range"
+                  className="range-slider signal-range-input"
+                  aria-label="Ngưỡng lọc tín hiệu"
+                  min={sliderBounds.min}
+                  max={sliderBounds.max}
+                  step={sliderBounds.step}
+                  value={signalThreshold}
+                  onChange={(e) => setSignalThreshold(Number(e.target.value))}
+                />
+                {activeSignalRange && (
+                  <div className="signal-slider-meta">
+                    <span>
+                      Dải phiên: {activeSignalRange.min.toFixed(1)}–{activeSignalRange.max.toFixed(1)}
+                      {signalMode === 'high_vol' ? ' bps' : ''}
+                    </span>
+                    <span>
+                      Thang: {sliderBounds.min}–{sliderBounds.max}
+                    </span>
+                  </div>
+                )}
+                {symbols.length === 0 && (
+                  <div className="signal-empty-note" role="status">
+                    Không có mã đạt ngưỡng này — hãy nới lỏng thanh trượt hoặc chọn Thủ công.
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           <details className="expander">
@@ -552,6 +895,34 @@ export function App() {
                     Messages: <strong>{(liveStatus.messages ?? 0).toLocaleString('en-US')}</strong> ·
                     Queue: {liveStatus.queue_depth ?? 0} · Lỗi: {liveStatus.callback_errors ?? 0}
                   </div>
+                </div>
+              )}
+              {providerStatus && (
+                <div className="live-status-card">
+                  <div>
+                    REST SSI: <strong>{providerStatus.readyForLiveRest ? 'Đủ khóa' : 'Chưa có khóa'}</strong> ·
+                    Rate limit: <code>{providerStatus.rateLimitRps} req/s</code>
+                  </div>
+                  <div>
+                    NEO dự phòng: <strong>{providerStatus.neoBackupReady ? 'Sẵn sàng' : 'Chưa cấu hình'}</strong>
+                  </div>
+                </div>
+              )}
+              <button
+                type="button"
+                className="btn btn-full"
+                style={{ marginTop: 8, fontSize: 11.5, padding: '5px 8px' }}
+                onClick={handleRunProviderProbe}
+                disabled={probeLoading}
+              >
+                {probeLoading ? 'Đang kiểm tra API…' : 'Kiểm tra kết nối API'}
+              </button>
+              {providerProbe && (
+                <div className="live-status-card" style={{ marginTop: 6 }}>
+                  <div style={{ color: providerProbe.ok ? '#4dd0c1' : '#fbbf24', fontWeight: 700 }}>
+                    {providerProbe.ok ? 'OK' : `An toàn · ${providerProbe.stage}`} ({providerProbe.latencyMs} ms)
+                  </div>
+                  <div style={{ marginTop: 2 }}>{providerProbe.message}</div>
                 </div>
               )}
               {mode === 'LIVE' && (
@@ -573,8 +944,8 @@ export function App() {
             onClick={handleRefresh}
             disabled={refreshing}
           >
-            <RefreshCw size={14} />
-            {refreshing ? 'Đang làm mới…' : 'Làm mới dữ liệu'}
+            <RefreshCw size={14} className={refreshing ? 'spin-icon' : ''} />
+            {refreshing ? 'Đang làm mới…' : refreshDone ? 'Đã cập nhật dữ liệu' : 'Làm mới dữ liệu'}
           </button>
         </div>
       </aside>
@@ -649,6 +1020,8 @@ export function App() {
               settings={settings}
               preferredSym={preferredSym}
               onConsumePreferredSym={() => setPreferredSym(null)}
+              preferredTsMs={preferredExecTsMs}
+              onConsumePreferredTsMs={() => setPreferredExecTsMs(null)}
             />
           )}
           {page === 'alerts' && (
@@ -660,6 +1033,12 @@ export function App() {
               mode={mode}
               focusedAlert={focusedAlert}
               onConsumeFocusedAlert={() => setFocusedAlert(null)}
+              onSimulateAtAlert={(sym, tsMs) => {
+                ensureSymbolActive(sym);
+                setPreferredSym(sym);
+                setPreferredExecTsMs(tsMs);
+                setPage('execution-cost');
+              }}
             />
           )}
           {page === 'validation' && (
@@ -673,6 +1052,10 @@ export function App() {
               manifests={boot.manifests || []}
               sessions={boot.sessions || []}
               provider={provider}
+              providerStatus={providerStatus}
+              providerProbe={providerProbe}
+              probeLoading={probeLoading}
+              onRunProviderProbe={handleRunProviderProbe}
             />
           )}
           {page === 'methodology' && <MethodologyPage />}
@@ -696,14 +1079,24 @@ export function App() {
                 ref={paletteInputRef}
                 type="text"
                 className="tv-palette-input"
-                placeholder="Nhập mã (VD: FPT, SSI, DIG) hoặc tên nhóm…"
+                placeholder="Nhập mã (VD: FPT, SSI, DIG) hoặc dùng ↑ / ↓ + Enter…"
                 value={paletteQuery}
                 onChange={(e) => setPaletteQuery(e.target.value)}
                 onKeyDown={(e) => {
+                  if (e.key === 'ArrowDown' && paletteItems.length) {
+                    e.preventDefault();
+                    setPaletteIdx((prev) => (prev + 1) % paletteItems.length);
+                    return;
+                  }
+                  if (e.key === 'ArrowUp' && paletteItems.length) {
+                    e.preventDefault();
+                    setPaletteIdx((prev) => (prev - 1 + paletteItems.length) % paletteItems.length);
+                    return;
+                  }
                   if (e.key === 'Enter' && paletteItems.length) {
-                    const top = paletteItems[0];
-                    ensureSymbolActive(top.symbol);
-                    setPreferredTapeSym(top.symbol);
+                    const chosen = paletteItems[Math.min(paletteIdx, paletteItems.length - 1)] || paletteItems[0];
+                    ensureSymbolActive(chosen.symbol);
+                    setPreferredTapeSym(chosen.symbol);
                     setPage('overview');
                     setPaletteOpen(false);
                   }
@@ -724,8 +1117,12 @@ export function App() {
                   Không khớp mã nào với &ldquo;{paletteQuery}&rdquo;.
                 </div>
               ) : (
-                paletteItems.map((item) => (
-                  <div key={item.symbol} className="tv-palette-row">
+                paletteItems.map((item, idx) => (
+                  <div
+                    key={item.symbol}
+                    className={`tv-palette-row ${idx === paletteIdx ? 'highlighted' : ''}`}
+                    onMouseEnter={() => setPaletteIdx(idx)}
+                  >
                     <div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         <span className="mono" style={{ fontWeight: 700, color: '#f0f3fa' }}>

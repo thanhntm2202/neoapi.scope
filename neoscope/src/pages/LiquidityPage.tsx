@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ChevronLeft, ChevronRight, Pause, Play } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Pause, Play, SlidersHorizontal } from 'lucide-react';
+import { computeWeightedLhs, LhsWeights } from '../../server/liquidityMath';
 import { PlotlyChart } from '../components/PlotlyChart';
 import { SectionHeading } from '../components/ThemeParts';
 import { C_ACCENT, C_GRID, C_LARGE, C_MUTED, C_TEXT, C_THIN, fmtVnHm, toVnIsoLocal } from '../lib/format';
@@ -16,6 +17,37 @@ interface LiquidityPageProps {
 const COMP_KEYS = ['tightness', 'depth', 'immediacy', 'stability', 'balance'] as const;
 const COMP_LABELS = ['Độ chặt<br>spread', 'Độ sâu', 'Tức thời<br>(ILLIQ)', 'Ổn định<br>spread', 'Cân bằng<br>OBI'];
 const RADAR_LABELS = ['Độ chặt spread', 'Độ sâu', 'Tức thời (ILLIQ)', 'Ổn định spread', 'Cân bằng OBI'];
+
+const WEIGHT_FIELDS: { key: keyof LhsWeights; label: string; hint: string }[] = [
+  { key: 'tightness', label: 'Độ chặt spread', hint: 'Chênh lệch giá mua/bán tốt nhất' },
+  { key: 'depth', label: 'Độ sâu 3 mức', hint: 'Khối lượng chào sẵn trên sổ lệnh' },
+  { key: 'immediacy', label: 'Tức thời (ILLIQ)', hint: 'Mức trượt giá trên đồng khối lượng' },
+  { key: 'stability', label: 'Ổn định spread', hint: 'Ít giãn rộng đột ngột qua thời gian' },
+  { key: 'balance', label: 'Cân bằng OBI', hint: 'Cân xứng giữa lực mua và lực bán' },
+];
+
+const WEIGHT_PRESETS: { id: string; label: string; weights: LhsWeights }[] = [
+  {
+    id: 'default',
+    label: 'Mặc định (1 : 1)',
+    weights: { tightness: 1, depth: 1, immediacy: 1, stability: 1, balance: 1 },
+  },
+  {
+    id: 'scalp',
+    label: 'Lướt sóng nhanh',
+    weights: { tightness: 3, depth: 1, immediacy: 1, stability: 1, balance: 2.5 },
+  },
+  {
+    id: 'block',
+    label: 'Đi lệnh lớn (Block)',
+    weights: { tightness: 1, depth: 3, immediacy: 2.5, stability: 1, balance: 0.5 },
+  },
+  {
+    id: 'defensive',
+    label: 'Phòng thủ ổn định',
+    weights: { tightness: 1, depth: 1.5, immediacy: 1, stability: 3, balance: 1 },
+  },
+];
 
 export const LiquidityPage: React.FC<LiquidityPageProps> = ({
   sessionData,
@@ -43,6 +75,13 @@ export const LiquidityPage: React.FC<LiquidityPageProps> = ({
   const [timeIdx, setTimeIdx] = useState<number>(Math.max(times.length - 1, 0));
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [heatmapMetric, setHeatmapMetric] = useState<HeatmapMetric>('lhs');
+  const [weights, setWeights] = useState<LhsWeights>({
+    tightness: 1,
+    depth: 1,
+    immediacy: 1,
+    stability: 1,
+    balance: 1,
+  });
 
   useEffect(() => {
     setIsPlaying(false);
@@ -280,6 +319,14 @@ export const LiquidityPage: React.FC<LiquidityPageProps> = ({
   const minRho = sens.length
     ? Math.min(...sens.map((b) => Number(b.min_spearman)))
     : null;
+
+  const weightedSandbox = useMemo(() => computeWeightedLhs(atT, weights), [atT, weights]);
+  const activePresetId = useMemo(() => {
+    const found = WEIGHT_PRESETS.find((p) =>
+      WEIGHT_FIELDS.every((f) => Math.abs(p.weights[f.key] - weights[f.key]) < 1e-6),
+    );
+    return found ? found.id : 'custom';
+  }, [weights]);
 
   if (!dayBars.length) {
     return <div className="callout warning">Chưa có LHS cho phiên này — chạy `neoscope analyze`.</div>;
@@ -593,6 +640,131 @@ export const LiquidityPage: React.FC<LiquidityPageProps> = ({
               khoản. Giá trị xây dựng so với ILLIQ tương lai xem tab Kiểm chứng.
             </div>
           )}
+        </div>
+      )}
+
+      {weightedSandbox.items.length > 0 && (
+        <div className="card-panel" style={{ marginTop: 18 }} aria-label="Phòng thí nghiệm trọng số LHS">
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              flexWrap: 'wrap',
+              gap: 10,
+              marginBottom: 8,
+            }}
+          >
+            <div>
+              <h3 className="sec-title" style={{ margin: 0, display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+                <SlidersHorizontal size={15} color="#29b6f6" />
+                Phòng thí nghiệm trọng số LHS (What-If Sandbox · lúc{' '}
+                {selectedTime ? fmtVnHm(selectedTime.iso) : '—'})
+              </h3>
+              <div className="sec-note" style={{ margin: '2px 0 0 0' }}>
+                Điều chỉnh trọng số 5 cấu phần theo khẩu vị giao dịch (lướt sóng, đi lệnh lớn, phòng thủ) để kiểm tra độ nhạy thứ hạng trực tiếp.
+              </div>
+            </div>
+            <div className="sandbox-rho-badge" aria-live="polite">
+              Spearman ρ vs mặc định:{' '}
+              <strong>
+                {weightedSandbox.spearmanVsBaseline !== null
+                  ? weightedSandbox.spearmanVsBaseline.toFixed(3)
+                  : '—'}
+              </strong>
+            </div>
+          </div>
+
+          <div className="tv-seg-group" role="group" aria-label="Cấu hình trọng số mẫu" style={{ marginBottom: 12 }}>
+            {WEIGHT_PRESETS.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                className={`tv-seg-btn ${activePresetId === p.id ? 'active' : ''}`}
+                aria-pressed={activePresetId === p.id}
+                onClick={() => setWeights({ ...p.weights })}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="sandbox-layout" style={{ alignItems: 'start' }}>
+            <div className="sandbox-sliders-col">
+              {WEIGHT_FIELDS.map((f) => (
+                <div key={f.key} className="sandbox-slider-row">
+                  <div className="sandbox-slider-top">
+                    <label htmlFor={`lhs-w-${f.key}`}>{f.label}</label>
+                    <span className="mono" style={{ color: '#29b6f6', fontWeight: 700 }}>
+                      ×{weights[f.key].toFixed(1)}
+                    </span>
+                  </div>
+                  <input
+                    id={`lhs-w-${f.key}`}
+                    type="range"
+                    className="range-slider"
+                    min={0}
+                    max={3}
+                    step={0.5}
+                    value={weights[f.key]}
+                    onChange={(e) =>
+                      setWeights((prev) => ({ ...prev, [f.key]: Number(e.target.value) }))
+                    }
+                  />
+                  <div className="small-caption" style={{ margin: '1px 0 0 0', fontSize: 11 }}>
+                    {f.hint}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="table-wrap">
+              <table className="neo-table compact">
+                <thead>
+                  <tr>
+                    <th className="num">Mới</th>
+                    <th className="num">Gốc</th>
+                    <th className="num">Δ</th>
+                    <th>Mã</th>
+                    <th>Nhóm</th>
+                    <th className="num">LHS gốc</th>
+                    <th className="num">LHS mới</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {weightedSandbox.items.map((item) => (
+                    <tr key={item.symbol}>
+                      <td className="num" style={{ fontWeight: 700 }}>#{item.customRank}</td>
+                      <td className="num">#{item.baselineRank}</td>
+                      <td className="num">
+                        <span
+                          className={`rank-delta-chip ${
+                            item.rankDelta > 0 ? 'up' : item.rankDelta < 0 ? 'down' : 'flat'
+                          }`}
+                        >
+                          {item.rankDelta > 0
+                            ? `▲ +${item.rankDelta}`
+                            : item.rankDelta < 0
+                              ? `▼ ${item.rankDelta}`
+                              : '—'}
+                        </span>
+                      </td>
+                      <td className="mono" style={{ fontWeight: 700, color: '#f0f3fa' }}>
+                        {item.symbol}
+                      </td>
+                      <td style={{ whiteSpace: 'nowrap' }}>
+                        {item.group === 'thin' ? 'Midcap mỏng' : 'VN30 lớn'}
+                      </td>
+                      <td className="num">{item.baselineLhs.toFixed(1)}</td>
+                      <td className="num" style={{ fontWeight: 700, color: '#29b6f6' }}>
+                        {item.customLhs.toFixed(1)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
       )}
     </div>

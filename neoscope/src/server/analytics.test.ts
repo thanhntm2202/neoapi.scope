@@ -194,3 +194,114 @@ test('buildCostCurve evaluates all 8 notionals with decreasing coverage and vali
     assert.equal(pt.hi_bps, null);
   }
 });
+
+import { buildOrderSlicingComparison, buildTopFailureCases } from './analytics.js';
+
+test('buildOrderSlicingComparison evaluates 1/2/4/8 slices with higher book coverage and lower sweep slippage', () => {
+  const settings = makeSettings();
+  const cmp = buildOrderSlicingComparison({
+    mid: 130000,
+    side: -1,
+    qty: 20000, // exceeds visible 3-level bid depth of 10,000 shares
+    prices: [129900, 129800, 129700],
+    vols: [2000, 3000, 5000],
+    hs_bps: 7.69,
+    obi_now: -0.25, // adverse selling pressure makes delay/residual costlier than slicing
+    v_rate: 50,
+    sigma: 1.2,
+    kappa: 0.05,
+    y_risk: 1.0,
+    settings,
+    hasFoldModel: true,
+  });
+
+  assert.equal(cmp.rows.length, 4);
+  assert.deepEqual(cmp.rows.map((r) => r.slices), [1, 2, 4, 8]);
+  assert.equal(cmp.rows[0].coveragePct, 50); // 10k / 20k
+  assert.equal(cmp.rows[1].coveragePct, 100); // 10k / 10k
+  assert.ok(cmp.rows[3].visCostBps! < cmp.rows[0].visCostBps!);
+  assert.ok(cmp.rows[3].savingVsSingleBps! > 0);
+  assert.equal(cmp.rows[0].feeTaxBps, 25); // 15 bps fee + 10 bps sell tax
+  assert.ok(cmp.assumptionNote.includes('phục hồi sổ lệnh'));
+});
+
+test('buildTopFailureCases sorts OOS errors descending, flags outside-PI tails, and attaches causes', () => {
+  const preds = [
+    {
+      model: 'ladder_only',
+      order_id: 'IGNORE',
+      e_is_bps: 0,
+      realized_is_bps: 200,
+    },
+    {
+      model: 'full',
+      order_id: 'O1',
+      session_date: '2026-11-12',
+      fold: 7,
+      symbol: 'HPG',
+      group: 'large',
+      side: -1,
+      notional_vnd: 500e6,
+      coverage: 1.0,
+      tau_s: 0,
+      w_res: 0,
+      w_unf: 0,
+      e_is_bps: 5.0,
+      realized_is_bps: 6.0,
+      lo_bps: 3.0,
+      hi_bps: 8.0,
+      flags: '',
+    },
+    {
+      model: 'full',
+      order_id: 'O2',
+      session_date: '2026-11-16',
+      fold: 9,
+      symbol: 'DIG',
+      group: 'thin',
+      side: -1,
+      notional_vnd: 2e9,
+      coverage: 0.32,
+      tau_s: 125,
+      w_res: 0.45,
+      w_unf: 0.23,
+      e_is_bps: 22.0,
+      realized_is_bps: 89.5,
+      lo_bps: 5.0,
+      hi_bps: 42.0,
+      flags: 'OBI_TAIL',
+    },
+    {
+      model: 'full',
+      order_id: 'O3',
+      session_date: '2026-11-14',
+      fold: 8,
+      symbol: 'PDR',
+      group: 'thin',
+      side: 1,
+      notional_vnd: 1e9,
+      coverage: 0.6,
+      tau_s: 70,
+      w_res: 0.4,
+      w_unf: 0,
+      e_is_bps: 31.0,
+      realized_is_bps: 11.0,
+      lo_bps: 15.0,
+      hi_bps: 45.0,
+      flags: '',
+    },
+  ];
+
+  const summary = buildTopFailureCases(preds, 180, 2);
+  assert.equal(summary.totalOrders, 3);
+  assert.equal(summary.outsidePiCount, 2);
+  assert.equal(summary.beyondBookTopCount, 2);
+  assert.equal(summary.cases.length, 2);
+  assert.equal(summary.cases[0].orderId, 'O2');
+  assert.equal(Math.round(summary.cases[0].absErrorBps * 10), 675);
+  assert.equal(summary.cases[0].outsidePi, true);
+  assert.ok(summary.cases[0].reasons.some((r) => r.includes('Vượt sổ')));
+  assert.ok(summary.cases[0].reasons.some((r) => r.includes('trần PI 90%')));
+  assert.equal(summary.cases[1].orderId, 'O3');
+});
+

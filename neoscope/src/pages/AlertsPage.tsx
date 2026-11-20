@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Download } from 'lucide-react';
+import { CandlestickChart, Download } from 'lucide-react';
 import { PlotlyChart } from '../components/PlotlyChart';
 import { KpiGrid } from '../components/ThemeParts';
 import {
@@ -31,6 +31,7 @@ interface AlertsPageProps {
   mode: string;
   focusedAlert?: { session_date: string; symbol: string; ts_ms: number; type?: string } | null;
   onConsumeFocusedAlert?: () => void;
+  onSimulateAtAlert?: (symbol: string, tsMs: number) => void;
 }
 
 const PRIO_LABEL: Record<string, string> = {
@@ -49,6 +50,7 @@ export const AlertsPage: React.FC<AlertsPageProps> = ({
   mode,
   focusedAlert,
   onConsumeFocusedAlert,
+  onSimulateAtAlert,
 }) => {
   const alerts: any[] = useMemo(() => results?.alerts || [], [results]);
   const alertPr: any[] = useMemo(() => results?.alert_pr || [], [results]);
@@ -579,9 +581,30 @@ export const AlertsPage: React.FC<AlertsPageProps> = ({
             </table>
           </div>
 
-          <h4 id="alert-evidence-panel" style={{ margin: '18px 0 8px 0', color: '#f0f3fa' }}>
-            Truy nguyên một cảnh báo
-          </h4>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              flexWrap: 'wrap',
+              gap: 10,
+              margin: '18px 0 8px 0',
+            }}
+          >
+            <h4 id="alert-evidence-panel" style={{ margin: 0, color: '#f0f3fa' }}>
+              Truy nguyên một cảnh báo
+            </h4>
+            {pickedAlert && onSimulateAtAlert && (
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => onSimulateAtAlert(pickedAlert.symbol, pickedAlert.ts_ms)}
+              >
+                <CandlestickChart size={14} />
+                Mô phỏng chi phí lệnh lúc xảy ra cảnh báo →
+              </button>
+            )}
+          </div>
           <div style={{ marginBottom: 12 }}>
             <label className="field-label" htmlFor="alert-pick-select">
               Chọn cảnh báo để soi bằng chứng
