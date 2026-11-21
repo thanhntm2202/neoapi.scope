@@ -235,8 +235,8 @@ def test_sdk_config_uses_environment_credentials_and_market_data_defaults(
         settings, tmp_path, monkeypatch):
     isolated = Settings(copy.deepcopy(settings.as_dict()), settings.source)
     isolated._data["paths"]["data_dir"] = str(tmp_path / "data")
-    for key, value in (("SSI_CLIENT_ID", "client-test"),
-                       ("SSI_API_KEY", "key-test"),
+    monkeypatch.delenv("SSI_CLIENT_ID", raising=False)
+    for key, value in (("SSI_API_KEY", "key-test"),
                        ("SSI_API_SECRET", "secret-test")):
         monkeypatch.setenv(key, value)
 
@@ -247,7 +247,7 @@ def test_sdk_config_uses_environment_credentials_and_market_data_defaults(
     monkeypatch.setitem(sys.modules, "ssi_sdk", SimpleNamespace(Config=FakeConfig))
     cfg = sdk_config(isolated)
 
-    assert cfg.kwargs["client_id"] == "client-test"
+    assert "client_id" not in cfg.kwargs
     assert cfg.kwargs["api_key"] == "key-test"
     assert cfg.kwargs["api_secret"] == "secret-test"
     assert cfg.kwargs["auto_reconnect"] is True
@@ -262,7 +262,7 @@ def test_installed_ssi_sdk_accepts_config_and_market_stream_methods(
 
     isolated = Settings(copy.deepcopy(settings.as_dict()), settings.source)
     isolated._data["paths"]["data_dir"] = str(tmp_path / "data")
-    monkeypatch.setenv("SSI_CLIENT_ID", "client-test")
+    monkeypatch.delenv("SSI_CLIENT_ID", raising=False)
     monkeypatch.setenv("SSI_API_KEY", "key-test")
     monkeypatch.setenv("SSI_API_SECRET", "secret-test")
     config = sdk_config(isolated)

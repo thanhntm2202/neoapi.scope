@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { CandlestickChart, Download } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { CandlestickChart, Download, FileCode2, SlidersHorizontal } from 'lucide-react';
 import { PlotlyChart } from '../components/PlotlyChart';
 import { KpiGrid } from '../components/ThemeParts';
 import {
@@ -162,6 +162,69 @@ export const AlertsPage: React.FC<AlertsPageProps> = ({
 
   const [contextRows, setContextRows] = useState<any[]>([]);
   const [truthEvents, setTruthEvents] = useState<any[]>([]);
+
+  // Alert Threshold Lab state (Bloom #6)
+  const [labZ, setLabZ] = useState<number>(3.0);
+  const [labPct, setLabPct] = useState<number>(0.99);
+  const [labPersist, setLabPersist] = useState<number>(3);
+  const [labCooldown, setLabCooldown] = useState<number>(60);
+  const [labResult, setLabResult] = useState<any>(null);
+  const [labLoading, setLabLoading] = useState<boolean>(false);
+  const [labErr, setLabErr] = useState<string>('');
+  const labReqIdRef = useRef<number>(0);
+  const labAbortRef = useRef<AbortController | null>(null);
+
+  const runThresholdLab = useCallback(
+    async (overrides?: { z?: number; pct?: number; persist?: number; cooldown?: number }) => {
+      const zThreshold = overrides?.z ?? labZ;
+      const pctThreshold = overrides?.pct ?? labPct;
+      const persistenceN = overrides?.persist ?? labPersist;
+      const cooldownS = overrides?.cooldown ?? labCooldown;
+      const reqId = ++labReqIdRef.current;
+      labAbortRef.current?.abort();
+      const ctrl = new AbortController();
+      labAbortRef.current = ctrl;
+      setLabLoading(true);
+      setLabErr('');
+      try {
+        const res = await fetch('/api/alerts/lab', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal: ctrl.signal,
+          body: JSON.stringify({
+            dataset,
+            zThreshold,
+            pctThreshold,
+            persistenceN,
+            cooldownS,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Không chạy được Threshold Lab');
+        if (reqId === labReqIdRef.current) {
+          setLabResult(data);
+        }
+      } catch (err: any) {
+        if (err?.name === 'AbortError') return;
+        if (reqId === labReqIdRef.current) {
+          setLabErr(err?.message || 'Lỗi Threshold Lab');
+        }
+      } finally {
+        if (reqId === labReqIdRef.current) {
+          setLabLoading(false);
+        }
+      }
+    },
+    [dataset, labZ, labPct, labPersist, labCooldown],
+  );
+
+  useEffect(() => {
+    runThresholdLab({ z: 3.0, pct: 0.99, persist: 3, cooldown: 60 });
+    return () => {
+      labAbortRef.current?.abort();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dataset]);
 
   useEffect(() => {
     if (!pickedAlert) {
@@ -741,6 +804,296 @@ export const AlertsPage: React.FC<AlertsPageProps> = ({
           </div>
         </div>
       )}
+
+      <div className="card-panel" id="alert-threshold-lab-card" style={{ marginTop: 20 }}>
+        <div className="h2h-header-row" style={{ marginBottom: 10 }}>
+          <div>
+            <div className="narrative-head" style={{ marginBottom: 4 }}>
+              <span className="narrative-badge">
+                <SlidersHorizontal size={12} style={{ marginRight: 4, verticalAlign: '-1px' }} />
+                Bloom #6 · Sáng tạo &amp; Hiệu chỉnh Ngưỡng
+              </span>
+              <h4 className="narrative-title">
+                Phòng thí nghiệm Ngưỡng Cảnh báo (Alert Rule &amp; Threshold Lab)
+              </h4>
+            </div>
+            <p className="small-caption" style={{ margin: 0 }}>
+              Thay đổi trực tiếp ngưỡng z-score, phân vị đuôi, độ dai dẳng và cooldown rồi chạy lại toàn bộ thuật toán expanding trên mọi phiên curated.
+            </p>
+          </div>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              className="preset-btn"
+              onClick={() => {
+                setLabZ(2.5);
+                setLabPct(0.98);
+                setLabPersist(2);
+                setLabCooldown(45);
+                runThresholdLab({ z: 2.5, pct: 0.98, persist: 2, cooldown: 45 });
+              }}
+            >
+              Nhạy hơn (z=2.5 · P98)
+            </button>
+            <button
+              type="button"
+              className="preset-btn"
+              onClick={() => {
+                setLabZ(3.0);
+                setLabPct(0.99);
+                setLabPersist(3);
+                setLabCooldown(60);
+                runThresholdLab({ z: 3.0, pct: 0.99, persist: 3, cooldown: 60 });
+              }}
+            >
+              Chuẩn NeoScope (z=3.0)
+            </button>
+            <button
+              type="button"
+              className="preset-btn"
+              onClick={() => {
+                setLabZ(3.5);
+                setLabPct(0.995);
+                setLabPersist(4);
+                setLabCooldown(90);
+                runThresholdLab({ z: 3.5, pct: 0.995, persist: 4, cooldown: 90 });
+              }}
+            >
+              Nghiêm ngặt (z=3.5)
+            </button>
+          </div>
+        </div>
+
+        <div className="lab-controls-grid">
+          <div className="lab-control-item">
+            <div className="lab-control-head">
+              <label htmlFor="lab-z-slider">Cổng z-score</label>
+              <span className="mono">{labZ.toFixed(1)}σ</span>
+            </div>
+            <input
+              id="lab-z-slider"
+              type="range"
+              className="range-slider"
+              min={2.0}
+              max={4.5}
+              step={0.1}
+              value={labZ}
+              onChange={(e) => setLabZ(Number(e.target.value))}
+            />
+          </div>
+          <div className="lab-control-item">
+            <div className="lab-control-head">
+              <label htmlFor="lab-pct-slider">Phân vị đuôi baseline</label>
+              <span className="mono">{(labPct * 100).toFixed(1)}%</span>
+            </div>
+            <input
+              id="lab-pct-slider"
+              type="range"
+              className="range-slider"
+              min={0.95}
+              max={0.999}
+              step={0.001}
+              value={labPct}
+              onChange={(e) => setLabPct(Number(e.target.value))}
+            />
+          </div>
+          <div className="lab-control-item">
+            <div className="lab-control-head">
+              <label htmlFor="lab-persist-slider">Độ dai dẳng (tick)</label>
+              <span className="mono">{labPersist} tick</span>
+            </div>
+            <input
+              id="lab-persist-slider"
+              type="range"
+              className="range-slider"
+              min={1}
+              max={6}
+              step={1}
+              value={labPersist}
+              onChange={(e) => setLabPersist(Number(e.target.value))}
+            />
+          </div>
+          <div className="lab-control-item">
+            <div className="lab-control-head">
+              <label htmlFor="lab-cooldown-slider">Cooldown tối thiểu</label>
+              <span className="mono">{labCooldown}s</span>
+            </div>
+            <input
+              id="lab-cooldown-slider"
+              type="range"
+              className="range-slider"
+              min={15}
+              max={180}
+              step={15}
+              value={labCooldown}
+              onChange={(e) => setLabCooldown(Number(e.target.value))}
+            />
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 12 }}>
+          <button
+            type="button"
+            id="run-alert-lab-btn"
+            className="btn btn-primary"
+            disabled={labLoading}
+            onClick={() => runThresholdLab()}
+          >
+            {labLoading ? 'Đang chạy trên toàn phiên…' : 'Chạy thử nghiệm trên toàn phiên'}
+          </button>
+          {labResult?.protocolSpec && (
+            <button
+              type="button"
+              id="export-alert-protocol-btn"
+              className="btn"
+              onClick={() => {
+                const blob = new Blob([JSON.stringify(labResult.protocolSpec, null, 2)], {
+                  type: 'application/json;charset=utf-8;',
+                });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `neoscope_alert_protocol_z${labZ.toFixed(1)}.json`;
+                a.click();
+                URL.revokeObjectURL(url);
+              }}
+            >
+              <FileCode2 size={14} /> Xuất Protocol (.json)
+            </button>
+          )}
+        </div>
+
+        {labErr && (
+          <div className="callout error" style={{ marginTop: 10 }}>
+            {labErr}
+          </div>
+        )}
+
+        {labResult && (
+          <div style={{ marginTop: 14, opacity: labLoading ? 0.55 : 1, transition: 'opacity 0.15s' }}>
+            <div className="metric-grid">
+              <div className="metric-card">
+                <div className="m-label">Tổng cảnh báo thí nghiệm</div>
+                <div className="m-val">{Number(labResult.totalAlerts).toLocaleString('en-US')}</div>
+                <div className="m-delta">
+                  So với mặc định ({alerts.length}):{' '}
+                  {labResult.totalAlerts - alerts.length >= 0 ? '+' : ''}
+                  {labResult.totalAlerts - alerts.length}
+                </div>
+              </div>
+              <div className="metric-card">
+                <div className="m-label">Phân tầng P1 / P2 / P3</div>
+                <div className="m-val" style={{ fontSize: 17 }}>
+                  {labResult.p1Count} / {labResult.p2Count} / {labResult.p3Count}
+                </div>
+                <div className="m-delta">Quét {labResult.sessionsCount} phiên</div>
+              </div>
+              <div className="metric-card">
+                <div className="m-label">Precision / Recall</div>
+                <div className="m-val" style={{ fontSize: 17 }}>
+                  {labResult.overallPrecision != null
+                    ? `${(labResult.overallPrecision * 100).toFixed(1)}% / ${(labResult.overallRecall * 100).toFixed(1)}%`
+                    : 'N/A (LIVE)'}
+                </div>
+                <div className="m-delta">
+                  {labResult.overallF1 != null
+                    ? `F1 = ${(labResult.overallF1 * 100).toFixed(1)}%`
+                    : 'Chỉ có ground-truth ở SYNTHETIC'}
+                </div>
+              </div>
+            </div>
+
+            {Array.isArray(labResult.sweep) && labResult.sweep.length > 0 && (
+              <div style={{ marginTop: 12 }}>
+                <PlotlyChart
+                  data={[
+                    {
+                      type: 'bar',
+                      x: labResult.sweep.map((s: any) => `z=${s.zThreshold.toFixed(1)}`),
+                      y: labResult.sweep.map((s: any) => s.totalAlerts),
+                      name: 'Tổng cảnh báo',
+                      marker: {
+                        color: 'rgba(59, 130, 246, 0.22)',
+                        line: { color: 'rgba(96, 165, 250, 0.55)', width: 1 },
+                      },
+                      yaxis: 'y2',
+                    },
+                    ...(labResult.sweep.some((s: any) => s.precision != null)
+                      ? [
+                          {
+                            type: 'scatter',
+                            mode: 'lines+markers',
+                            x: labResult.sweep.map((s: any) => `z=${s.zThreshold.toFixed(1)}`),
+                            y: labResult.sweep.map((s: any) => (s.precision != null ? s.precision * 100 : null)),
+                            name: 'Precision (%)',
+                            line: { color: C_ACCENT, width: 2.2 },
+                            marker: { size: 7 },
+                          },
+                          {
+                            type: 'scatter',
+                            mode: 'lines+markers',
+                            x: labResult.sweep.map((s: any) => `z=${s.zThreshold.toFixed(1)}`),
+                            y: labResult.sweep.map((s: any) => (s.recall != null ? s.recall * 100 : null)),
+                            name: 'Recall (%)',
+                            line: { color: C_LARGE, width: 2.2 },
+                            marker: { size: 7 },
+                          },
+                        ]
+                      : []),
+                  ]}
+                  height={280}
+                  title="Đánh đổi Số cảnh báo vs Precision/Recall khi quét cổng z (2.0 → 4.0)"
+                  layout={{
+                    yaxis: { title: 'Precision / Recall (%)', range: [0, 108] },
+                    yaxis2: {
+                      title: 'Số cảnh báo',
+                      overlaying: 'y',
+                      side: 'right',
+                      rangemode: 'tozero',
+                      gridcolor: 'rgba(0,0,0,0)',
+                    },
+                    margin: { l: 56, r: 56, t: 54, b: 44 },
+                  }}
+                  alt="Đồ thị đánh đổi Precision, Recall và số lượng cảnh báo khi thay đổi ngưỡng z-score."
+                />
+              </div>
+            )}
+
+            {Array.isArray(labResult.byType) && labResult.byType.length > 0 && (
+              <div className="table-wrap" style={{ marginTop: 10 }}>
+                <table className="neo-table compact">
+                  <thead>
+                    <tr>
+                      <th>Loại cảnh báo</th>
+                      <th className="num">Số cảnh báo</th>
+                      <th className="num">TP</th>
+                      <th className="num">Precision</th>
+                      <th className="num">Sự kiện</th>
+                      <th className="num">Bắt được</th>
+                      <th className="num">Recall</th>
+                      <th className="num">F1</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {labResult.byType.map((r: any) => (
+                      <tr key={r.alertType}>
+                        <td title={fmtAlertTypeDesc(r.alertType)}>{fmtAlertType(r.alertType)}</td>
+                        <td className="num">{r.nAlerts}</td>
+                        <td className="num">{r.tp}</td>
+                        <td className="num">{r.precision != null ? `${(r.precision * 100).toFixed(1)}%` : '—'}</td>
+                        <td className="num">{r.nEventsMapped}</td>
+                        <td className="num">{r.eventsDetected}</td>
+                        <td className="num">{r.recall != null ? `${(r.recall * 100).toFixed(1)}%` : '—'}</td>
+                        <td className="num">{r.f1 != null ? `${(r.f1 * 100).toFixed(1)}%` : '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 };

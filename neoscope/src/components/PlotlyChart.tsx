@@ -30,6 +30,8 @@ export const PlotlyChart: React.FC<PlotlyChartProps> = ({
   onClickPoint,
 }) => {
   const elRef = useRef<HTMLDivElement | null>(null);
+  const isMountedRef = useRef(true);
+  const renderPromiseRef = useRef<Promise<any> | null>(null);
   const onHoverRef = useRef(onHoverX);
   onHoverRef.current = onHoverX;
   const onClickRef = useRef(onClickPoint);
@@ -38,6 +40,7 @@ export const PlotlyChart: React.FC<PlotlyChartProps> = ({
   useEffect(() => {
     const el = elRef.current;
     if (!el) return;
+    let cancelled = false;
 
     const spikeOpts = crosshair
       ? {
@@ -125,25 +128,20 @@ export const PlotlyChart: React.FC<PlotlyChartProps> = ({
       };
     }
 
-    Plotly.react(el, data, mergedLayout, {
-      responsive: true,
-      displayModeBar: 'hover',
-      displaylogo: false,
-      modeBarButtonsToRemove: ['lasso2d', 'select2d'],
-    });
-
+    const plotlyEl = el as any;
     const handleHover = (ev: any) => {
-      if (!onHoverRef.current) return;
+      if (cancelled || !isMountedRef.current || !onHoverRef.current) return;
       const pt = ev?.points?.[0];
       if (pt && pt.x !== undefined && pt.x !== null) {
         onHoverRef.current(String(pt.x));
       }
     };
     const handleUnhover = () => {
+      if (cancelled || !isMountedRef.current) return;
       onHoverRef.current?.(null);
     };
     const handleClick = (ev: any) => {
-      if (!onClickRef.current) return;
+      if (cancelled || !isMountedRef.current || !onClickRef.current) return;
       const pt = ev?.points?.[0];
       if (!pt) return;
       onClickRef.current({
@@ -155,16 +153,48 @@ export const PlotlyChart: React.FC<PlotlyChartProps> = ({
       });
     };
 
-    const plotlyEl = el as any;
-    if (typeof plotlyEl.on === 'function') {
-      plotlyEl.on('plotly_hover', handleHover);
-      plotlyEl.on('plotly_unhover', handleUnhover);
-      plotlyEl.on('plotly_click', handleClick);
+    try {
+      const plotPromise = Promise.resolve(
+        Plotly.react(el, data, mergedLayout, {
+          responsive: true,
+          displayModeBar: 'hover',
+          displaylogo: false,
+          modeBarButtonsToRemove: ['lasso2d', 'select2d'],
+        })
+      ).then(() => {
+        if (!cancelled && isMountedRef.current && el.isConnected && typeof plotlyEl.on === 'function') {
+          if (typeof plotlyEl.removeListener === 'function') {
+            plotlyEl.removeListener('plotly_hover', handleHover);
+            plotlyEl.removeListener('plotly_unhover', handleUnhover);
+            plotlyEl.removeListener('plotly_click', handleClick);
+          }
+          plotlyEl.on('plotly_hover', handleHover);
+          plotlyEl.on('plotly_unhover', handleUnhover);
+          plotlyEl.on('plotly_click', handleClick);
+        }
+      }).catch(() => {
+        // Ignore transient Plotly abort during rapid unmount
+      });
+      renderPromiseRef.current = plotPromise;
+    } catch {
+      // Ignore synchronous Plotly guard error during unmount
     }
 
     const safeResize = () => {
-      if (el && el.isConnected && el.offsetParent !== null && el.clientWidth > 0 && el.clientHeight > 0) {
-        Plotly.Plots.resize(el);
+      if (
+        !cancelled &&
+        isMountedRef.current &&
+        el &&
+        el.isConnected &&
+        el.offsetParent !== null &&
+        el.clientWidth > 0 &&
+        el.clientHeight > 0
+      ) {
+        try {
+          Promise.resolve(Plotly.Plots.resize(el)).catch(() => {});
+        } catch {
+          // Ignore resize during teardown
+        }
       }
     };
 
@@ -173,6 +203,7 @@ export const PlotlyChart: React.FC<PlotlyChartProps> = ({
     window.addEventListener('resize', safeResize);
 
     return () => {
+      cancelled = true;
       ro.disconnect();
       window.removeEventListener('resize', safeResize);
       if (typeof plotlyEl.removeListener === 'function') {
@@ -184,9 +215,24 @@ export const PlotlyChart: React.FC<PlotlyChartProps> = ({
   }, [data, layout, height, title, crosshair]);
 
   useEffect(() => {
+    isMountedRef.current = true;
     const el = elRef.current;
     return () => {
-      if (el) Plotly.purge(el);
+      isMountedRef.current = false;
+      const pending = renderPromiseRef.current;
+      const purgeSafely = () => {
+        if (!el || isMountedRef.current) return;
+        try {
+          Plotly.purge(el);
+        } catch {
+          // Ignore purge if DOM node was already cleaned up
+        }
+      };
+      if (pending) {
+        Promise.resolve(pending).finally(purgeSafely);
+      } else {
+        purgeSafely();
+      }
     };
   }, []);
 

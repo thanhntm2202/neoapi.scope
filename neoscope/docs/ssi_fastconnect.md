@@ -20,7 +20,7 @@ The recorder writes its expected and server-reported active topics to `data/live
 
 ## Credentials and environment
 
-Set `SSI_CLIENT_ID`, `SSI_API_KEY`, and `SSI_API_SECRET` in `.env`. Credentials are not accepted from YAML and are never written to RAW, manifests, status files, or logs. Set `NEOSCOPE_MODE=LIVE` only after SSI has activated the API key and granted the required Market Data scopes. Confirm the portal environment and key before use; UAT and Production credentials are distinct. SSI is selected by default; set `NEOSCOPE_PROVIDER=NEO` to use the backup.
+Set `SSI_API_KEY` and `SSI_API_SECRET` in `.env`. The v3 token request uses these fields (and OTP only if the entitlement requires it); `SSI_CLIENT_ID` is not required. Credentials are not accepted from YAML and are never written to RAW, manifests, status files, or logs. Set `NEOSCOPE_MODE=LIVE` only after SSI has activated the API key and granted the required Market Data scopes. Confirm the portal environment and key before use; UAT and Production credentials are distinct. SSI is selected by default; set `NEOSCOPE_PROVIDER=NEO` to use the alternative provider.
 
 The SDK callback enqueues decoded messages for a dedicated RAW writer so compression and canonicalization do not block the WebSocket reader thread. The queue is bounded by `ssi_api.ingest_queue_size` (default 10,000); saturation stops the session with a failed status so a partial capture cannot look complete. Review the final manifest and status after each capture.
 
@@ -34,7 +34,7 @@ Bên cạnh luồng WebSocket, NeoScope tích hợp REST client riêng (`src/neo
 
 | Endpoint | Mục đích trong bài toán | Chuẩn hóa đầu ra |
 |---|---|---|
-| `api/v3/Market/AccessToken` | OAuth2 token (clientId/apiKey/apiSecret); cache theo TTL, refresh trước khi hết hạn và khi 401 | không lưu token ra đĩa/log |
+| `api/v3/Market/AccessToken` | OAuth2 token (`apiKey`/`apiSecret`, OTP nếu entitlement yêu cầu); cache theo TTL, refresh trước khi hết hạn và khi 401 | không lưu token ra đĩa/log |
 | `api/v3/Market/DailyOHLCHistory` | Bối cảnh giá dài hạn: đối chiếu độ lớn giá, kiểm tra lệch đơn vị nghìn-đ/VND so với luồng tick, ngưỡng biến động dài hạn | `ohlc_frame()`: một cột một đại lượng, dedup theo ngày, loại `close ≤ 0` |
 | `api/v3/Market/Securities` | Hợp lệ hóa watchlist trước khi subscribe stream | `securities_frame()`/`validate_watchlist()` |
 

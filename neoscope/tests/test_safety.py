@@ -69,9 +69,10 @@ def test_ssi_connector_does_not_import_trading_clients():
 def test_env_example_has_no_credentials():
     text = (REPO / ".env.example").read_text(encoding="utf-8")
     for key in ("NEO_USERNAME", "NEO_PASSWORD", "NEO_DEVICE_ID",
-                "SSI_CLIENT_ID", "SSI_API_KEY", "SSI_API_SECRET"):
+                "SSI_API_KEY", "SSI_API_SECRET"):
         match = re.search(rf"^{key}=(.*)$", text, re.MULTILINE)
         assert match is not None and match.group(1).strip() == ""
+    assert "SSI_CLIENT_ID" not in text
 
 
 def test_settings_yaml_contains_no_credentials():
@@ -82,7 +83,7 @@ def test_settings_yaml_contains_no_credentials():
 
 def test_env_secret_error_does_not_leak_other_values(monkeypatch):
     from neoscope.config import env_secret
-    monkeypatch.setenv("SSI_CLIENT_ID", "SENSITIVE_VALUE_XYZ")
+    monkeypatch.setenv("UNRELATED_SECRET", "SENSITIVE_VALUE_XYZ")
     monkeypatch.delenv("SSI_API_SECRET", raising=False)
     try:
         env_secret("SSI_API_SECRET")

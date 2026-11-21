@@ -37,49 +37,49 @@ Các mức ưu tiên được xếp từ percentile đuôi lịch sử (99%, 99,
 
 ## 3. Năng lực theo Bloom và đối chiếu rubric
 
-| Bậc Bloom | Bằng chứng có thể quan sát |
+| Bậc Bloom | Bằng chứng có thể quan sát trong sản phẩm |
 |---|---|
-| Nhớ | Từ điển và hợp đồng dữ liệu cho SSI, NEO, synthetic; tên trường, đơn vị và dữ liệu thiếu. |
-| Hiểu | Tài liệu phương pháp giải thích spread, depth, OBI, ILLIQ, LHS, cảnh báo và IS. |
-| Vận dụng | Ghi dữ liệu, replay RAW thành curated, chạy phân tích và xem dashboard. |
-| Phân tích | Phân rã score, cảnh báo theo baseline quá khứ, so sánh benchmark và chế độ phủ sổ. |
-| Đánh giá | Walk-forward theo phiên, cluster bootstrap, khoảng tin cậy, chất lượng dữ liệu và giới hạn công khai. |
-| Sáng tạo | Đề xuất giả thuyết mới, kiểm tra độ nhạy và thiết kế protocol cho cohort/nguồn mới. |
+| Nhớ | Modal Từ điển Vi cấu trúc (`GlossaryModal`, phím tắt `?`) + Từ điển dữ liệu SSI/NEO/synthetic (tên trường, đơn vị, quy ước bps, dữ liệu thiếu). |
+| Hiểu | Hướng dẫn quy trình 3 bước, tài liệu phương pháp, và biểu đồ **Hồ sơ thanh khoản chữ U theo khung 15 phút** (so sánh Quoted Spread vs Effective Spread, độ sâu và tỷ trọng KL). |
+| Vận dụng | Ghi dữ liệu, replay RAW→curated, **Dual API Probe (SSI + NEO)**, **SSI REST Context (`Securities` + `DailyOHLCHistory`)**, và buồng thử khớp lệnh giấy. |
+| Phân tích | Phân rã 5 cấu phần LHS, **Liquidity Beta Commonality** (Chordia et al. 2000), **Portfolio Liquidity & Exit Stress Check**, đối chứng trực tiếp 2 mã, và **Failure Case Explorer** Top 10 ca sai số OOS. |
+| Đánh giá | Walk-forward 5 folds, cluster bootstrap, **Đường cong hiệu chỉnh đa mức tin cậy (50/80/90/95%)**, **Chaos Fault Injection Lab** (429 / Stale Gap >30s / 6 bẫy dữ liệu / thiếu fold_params), và **System Self-Check** kiểm toán bảo mật. |
+| Sáng tạo | **Execution Playbook Synthesizer** (xuất kịch bản `.md` & bảng chia đợt `.csv`) và **Alert Rule & Threshold Lab** (quét `z`/percentile/dai dẳng/cooldown + xuất giao thức `.json`). |
 
-Liên hệ rubric học phần: vấn đề và người dùng được nêu tại §1–2; kỹ thuật dữ liệu tại §4–5; phương pháp và giả định tại §6; trải nghiệm tại dashboard Streamlit; kiểm chứng tại §7; tài liệu và quy trình chạy tại README cùng các tài liệu trong `docs/`. Đây là ánh xạ bằng chứng, không phải cam kết điểm số. Phần nguồn dữ liệu phải được giải thích cùng bằng chứng giảng viên duyệt vì khác yêu cầu mặc định NEO-core của đề.
+Liên hệ rubric học phần: vấn đề và người dùng được nêu tại §1–2; kỹ thuật dữ liệu tại §4–5; phương pháp và giả định tại §6; trải nghiệm tại giao diện web React + Express (cùng bản Streamlit gốc); kiểm chứng tại §7; tài liệu và quy trình chạy tại `README.md` cùng các tài liệu trong `docs/`. Phần nguồn dữ liệu phải được giải thích cùng bằng chứng giảng viên duyệt vì dùng SSI thay thế cho NEO-core mặc định theo quy chế đề bài.
 
 ### Đối chiếu 7 tiêu chí chấm điểm
 
 | Tiêu chí | Điểm tối đa | Bằng chứng trong sản phẩm | Bằng chứng cần đưa vào bài nộp / bảo vệ |
 |---|---:|---|---|
-| Vấn đề và giá trị FinTech | 15 | Nhu cầu, người dùng, bốn câu hỏi quyết định tại §1–2; dashboard trả lời theo luồng công việc. | Trình diễn một tình huống người dùng hoàn chỉnh; nêu phản hồi/đánh giá người dùng nếu đã thu thập, không tự nhận có khảo sát nếu chưa làm. |
-| Nguồn API và kỹ thuật dữ liệu | 20 | SSI FastConnect v3 làm nguồn thay thế đã được giảng viên duyệt; recorder, schema provider, canonical layer, RAW capture, quality flags và manifest; NEO adapter dự phòng. | Minh chứng duyệt SSI thay NEO; thông tin entitlement và manifest capture live khi được phép; không công bố credentials. |
-| Phương pháp tài chính và phân tích | 20 | LHS, microstructure, anomaly screening, IS simulator; giả định và giới hạn ở §6 và `methodology.md`; kiểm chứng theo thời gian ở `validation_protocol.md`. | Báo cáo đầy đủ kết quả, benchmark, độ bất định và phân tích sensitivity; tách rõ synthetic với live. |
-| Triển khai kỹ thuật | 20 | Python packages tách data/provider/finance/analytics/app; secrets qua environment; namespace provider; kiểm thử tự động. | Chụp phiên bản môi trường, mã nguồn và hướng dẫn chạy trên môi trường sạch; giải thích được các quyết định kỹ thuật. |
-| Sản phẩm và trải nghiệm | 10 | Điều hướng 7 trang theo hai nhóm; bộ lọc phiên/watchlist dùng xuyên suốt; badge nguồn/chế độ/phiên/mốc dữ liệu; tổng quan có 5 KPI theo lát cắt, biểu đồ độ rộng và xếp hạng LHS, bảng watchlist; trang mô phỏng, cảnh báo có truy nguyên, kiểm chứng và phương pháp; empty/error states có hướng dẫn xử lý. | Ảnh chụp hoặc demo video thể hiện cả trạng thái bình thường và dữ liệu thiếu/lỗi; dùng đúng nhãn nguồn/chế độ. |
-| Kiểm thử và kiểm chứng | 10 | Bộ kiểm thử tái lập, test tình huống lỗi, walk-forward, bootstrap theo phiên, khoảng tin cậy và kiểm tra chất lượng. | Đính kèm kết quả chạy test, protocol, dữ liệu/mã hash và các hạn chế; kiểm chứng kết nối live riêng nếu có entitlement. |
-| Tài liệu và trình bày | 5 | README, hồ sơ sản phẩm, kiến trúc, phương pháp, mapping API, ngưỡng, giới hạn và nguồn tham khảo. | Hoàn thiện báo cáo 8–12 trang, thông tin sinh viên, ảnh sản phẩm/video bảo vệ và trích dẫn theo quy định môn học. |
+| Vấn đề và giá trị FinTech | 15 | Nhu cầu 3 nhóm người dùng, quy trình 3 bước, Portfolio Stress Check & Execution Playbook giải quyết trực tiếp bài toán thoát lệnh tại VN. | Trình diễn tình huống hoàn chỉnh; sử dụng *User Testing Protocol* có sẵn khi thu thập phản hồi thật (không tự bịa số liệu khảo sát). |
+| Nguồn API và kỹ thuật dữ liệu | 20 | SSI FastConnect v3 (WebSocket + REST `Securities`/`DailyOHLCHistory` + TokenBucket 5 RPS), VPBankS NEO adapter & Dual Probe, RAW append-only, cờ chất lượng, SHA-256 manifest. | Minh chứng duyệt SSI thay NEO; ảnh chụp probe/REST context hoặc manifest capture live khi được cấp quyền; không công bố credentials. |
+| Phương pháp tài chính và phân tích | 20 | LHS 5 cấu phần, Intraday U-Shape, Liquidity Beta, anomaly screening, IS simulator + slicing 1/2/4/8 đợt, giả định & giới hạn công khai. | Báo cáo đầy đủ kết quả, benchmark, Calibration Curve, Failure Cases và sensitivity; tách bạch synthetic với live. |
+| Triển khai kỹ thuật | 20 | Song song Python pipeline (`src/neoscope/`) + Web Terminal Node.js/Express + React/TypeScript (`server.ts`, `server/`, `src/`); secrets strictly server-side; 173 Python pytest + 30 TypeScript unit test. | Ảnh chạy test (`pytest` & `npm test`), System Self-Check `PASS`, mã nguồn & hướng dẫn chạy sạch. |
+| Sản phẩm và trải nghiệm | 10 | Giao diện dark fintech 7 trang chuẩn TradingView, phím tắt `/` & `?` (Từ điển & Quy trình), Replay thanh trượt, Stress Danh mục, Chaos Banner và xử lý lỗi an toàn. | Ảnh chụp/video 1440×900 đầy đủ trạng thái bình thường, mô phỏng lỗi Chaos Lab và thiếu dữ liệu/khóa. |
+| Kiểm thử và kiểm chứng | 10 | Walk-forward 5 fold, bootstrap cụm phiên, Wilson CI 50–95%, Failure Case Explorer, Chaos Lab, Bảng đối chiếu Synthetic vs Live readiness. | Đính kèm kết quả chạy `npm test` + `pytest`, tệp `neoscope_oos_report.csv` và `neoscope_alert_protocol.json`. |
+| Tài liệu và trình bày | 5 | `README.md`, hồ sơ sản phẩm, kiến trúc, phương pháp, mapping API, ngưỡng, giới hạn, báo cáo cuối kỳ + Protocol kiểm thử người dùng. | Hoàn thiện báo cáo, thông tin sinh viên, ảnh/video bảo vệ và trích dẫn học thuật chuẩn mực. |
 
-Không suy ra điểm tuyệt đối chỉ từ việc có nhiều chức năng hoặc test pass. Phần chấm phụ thuộc chất lượng bằng chứng, khả năng giải thích, dữ liệu được phép sử dụng, và việc nộp đủ báo cáo/demo theo đề.
+Không suy ra điểm tuyệt đối chỉ từ việc có nhiều chức năng hoặc test pass. Phần chấm phụ thuộc chất lượng bằng chứng thực tế (bao gồm phiên LIVE tự capture) và trình bày trung thực giới hạn mô hình.
 
 ## 4. Kiến trúc hiện tại
 
 ```text
 SSI FastConnect v3 (mặc định) ─┐
-NEO API (backup chọn thủ công) ─┼─> recorder -> RAW có manifest và SHA-256
+NEO API (backup chọn chủ động) ─┼─> recorder -> RAW có manifest và SHA-256
 Synthetic xác định theo seed ──┘                  -> normalize + quality flags
-                                                  -> curated Parquet
-                                                  -> finance / analytics / simulator
-                                                  -> Streamlit research dashboard
+                                                  -> curated Parquet (SYNTHETIC / LIVE_SSI / LIVE_NEO)
+                                                  -> Python analytics & validation / Node.js Express API (:3000)
+                                                  -> React + TypeScript + Plotly Research Terminal
 ```
 
-- **SSI:** SDK Python chính thức, stream dữ liệu thị trường, lưu message đã được SDK giải mã theo topic và tạo bản ghi canonical khi hiểu được schema/đơn vị. Đây không phải bản chụp byte packet trên wire.
-- **NEO:** REST/WebSocket adapter chỉ cho dữ liệu thị trường, kích hoạt bằng `NEOSCOPE_PROVIDER=NEO`.
-- **Synthetic:** bộ dữ liệu mô phỏng được gắn nhãn rõ, dùng để tái hiện pipeline và cơ chế kiểm thử, không được xem là bằng chứng thị trường.
-- **Lưu trữ:** mỗi lần bắt đầu ghi live dùng một capture directory riêng. Callback SSI đưa message vào bounded queue trước khi worker ghi RAW; khi queue quá tải, phiên bị đánh dấu failed thay vì âm thầm bỏ dữ liệu. RAW giữ message đã giải mã, arrival timestamp, sequence, metadata cấu hình và digest; curated và results được tách theo provider.
-- **Giao diện:** dashboard chỉ đọc artifacts đã xử lý; paper simulator không import provider client.
+- **SSI:** SDK Python cho luồng WebSocket + client REST TypeScript & Python cho `Securities`, `DailyOHLCHistory`, `AccessToken` dưới TokenBucket 5 req/s.
+- **NEO:** REST/WebSocket adapter & probe xác thực JWT server-side (`POST /auth/token`), giữ làm nguồn dự phòng tách biệt namespace.
+- **Synthetic:** bộ dữ liệu mô phỏng có seed cố định (`SYNTHETIC`), dùng kiểm chứng cơ chế, tuyệt đối không gán nhãn thị trường thật.
+- **Lưu trữ & Giao diện:** curated tách theo `dataset_mode`; paper simulator & execution playbook tách ly hoàn toàn khỏi client giao dịch (0 endpoint đặt lệnh thật).
+- **Bảo mật:** toàn bộ `SSI_*` và `NEO_*` chỉ đọc từ `process.env` trên server; `SystemSelfCheck` quét tĩnh xác nhận không lộ secret ra browser.
 
-Chi tiết thành phần, vận hành và ranh giới tin cậy ở [architecture.md](architecture.md). Khóa và bí mật chỉ đọc từ biến môi trường; không lưu trong YAML, manifest hoặc log.
+Chi tiết thành phần ở [architecture.md](architecture.md). Khóa và bí mật chỉ đọc từ biến môi trường; không lưu trong YAML, manifest hoặc log.
 
 ## 5. Dữ liệu và quy tắc chuẩn hóa
 

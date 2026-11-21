@@ -70,7 +70,8 @@ TOKEN_BODY = {"status": "Success", "data": {"accessToken": "tok-123", "expiresIn
 def make_client(monkeypatch, tmp_path) -> tuple[SsiRestClient, FakeHttpClient]:
     fake = FakeHttpClient()
     monkeypatch.setattr(rest_mod.httpx, "Client", lambda **kw: fake)
-    for var, val in [("SSI_CLIENT_ID", "cid"), ("SSI_API_KEY", "key"), ("SSI_API_SECRET", "sec")]:
+    monkeypatch.delenv("SSI_CLIENT_ID", raising=False)
+    for var, val in [("SSI_API_KEY", "key"), ("SSI_API_SECRET", "sec")]:
         monkeypatch.setenv(var, val)
     s = load_settings()
     client = SsiRestClient(s)
@@ -83,7 +84,7 @@ def test_token_payload_and_cache(monkeypatch, tmp_path):
     assert client.tokens.get_token() == "tok-123"
     assert client.tokens.get_token() == "tok-123"          # cache: không gọi lại
     assert fake.requests.count(("POST", "api/v3/Market/AccessToken",
-                                {"clientId": "cid", "apiKey": "key", "apiSecret": "sec"})) == 1
+                                {"apiKey": "key", "apiSecret": "sec"})) == 1
     client.close()
 
 

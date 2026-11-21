@@ -112,12 +112,22 @@ Hệ thống NeoScope hoạt động theo mô hình Full-Stack tách biệt rõ 
 3. **Tầng Giao diện Phân tích React + TypeScript + Plotly (`/src/pages/*`):**
    - 7 màn hình chuyên biệt: *Tổng quan*, *Thanh khoản (cấu phần & What-If Sandbox)*, *Mô phỏng chi phí (DOM + Cost Curve + Slicing 1/2/4/8)*, *Cảnh báo (kèm cầu nối sang Thực thi)*, *Kiểm chứng ngoài mẫu*, *Dữ liệu & Chất lượng (Live Probe + Manifest + Heatmap)*, và *Phương pháp & Giới hạn (Sơ đồ 7 lớp + Ma trận Bloom)*.
 
+### 6.1. Quy trình demo cho người chấm
+1. Chạy bộ mô phỏng tái lập:
+   ```powershell
+   neoscope --mode SYNTHETIC all --force
+   neoscope --mode SYNTHETIC app
+   ```
+2. Trải nghiệm luồng Tổng quan → Thanh khoản → Cảnh báo → Mô phỏng chi phí → Kiểm chứng; sử dụng What-If Sandbox để đổi trọng số LHS và quan sát thay đổi thứ hạng.
+3. Khi demo Live SSI: đặt `NEOSCOPE_MODE=LIVE`, `NEOSCOPE_PROVIDER=SSI`, khai báo `SSI_API_KEY` và `SSI_API_SECRET`, rồi chạy `neoscope record` trong giờ giao dịch. Dừng bằng Ctrl+C, sau đó chạy `process`, `analyze`, `validate` và `app`.
+4. Mọi màn hình Live phải hiển thị provider, trạng thái kết nối, số thông điệp và nguồn dữ liệu; không thay tên hoặc trộn dữ liệu LIVE SSI với dữ liệu mô phỏng.
+
 ---
 
 ## 7. Bảo mật, quản lý khóa & tuân thủ API có trách nhiệm
 
-1. **Quản lý khóa hoàn toàn qua biến môi trường (`.env`, không commit secret):** Toàn bộ thông tin nhạy cảm (`SSI_CLIENT_ID`, `SSI_API_KEY`, `SSI_API_SECRET`, `NEO_USERNAME`, `NEO_PASSWORD`) chỉ tồn tại trong bộ nhớ tiến trình backend (`process.env`). File `.env.example` chỉ lưu tên biến mẫu.
-2. **Giao diện không nhập và không trả về khóa thô:** Endpoint `GET /api/provider/status` chỉ trả về cờ boolean (`hasSsiClientId`, `hasSsiApiKey`, `hasSsiSecret`, `neoBackupReady`), tên endpoint công khai và giới hạn tốc độ. `POST /api/provider/probe` trả về mã trạng thái HTTP, độ trễ (ms), bước kiểm tra và thông báo chẩn đoán an toàn (nếu thiếu biến môi trường hoặc lỗi HTTP 401/429 sẽ báo rõ nguyên nhân mà không rò rỉ payload token).
+1. **Quản lý khóa hoàn toàn qua biến môi trường (`.env`, không commit secret):** Với SSI FastConnect v3, thông tin xác thực gồm `SSI_API_KEY` và `SSI_API_SECRET`; với NEO dự phòng dùng `NEO_USERNAME` và `NEO_PASSWORD`. Tất cả chỉ tồn tại trong bộ nhớ tiến trình backend (`process.env`) và file `.env.example` chỉ lưu tên biến mẫu.
+2. **Giao diện không nhập và không trả về khóa thô:** Endpoint `GET /api/provider/status` chỉ trả về cờ boolean (`hasSsiApiKey`, `hasSsiSecret`, `neoBackupReady`), tên endpoint công khai và giới hạn tốc độ. `POST /api/provider/probe` trả về mã trạng thái HTTP, độ trễ (ms), bước kiểm tra và thông báo chẩn đoán an toàn (nếu thiếu biến môi trường hoặc lỗi HTTP 401/429 sẽ báo rõ nguyên nhân mà không rò rỉ payload token).
 3. **Tuân thủ giới hạn tần suất (Responsible Rate Limiting):** Toàn bộ request tới SSI/NEO đi qua hàng đợi TokenBucket cấu hình mặc định **`5 req/s`**, timeout `20s`, tối đa `3` lần thử lại có backoff lũy tiến (`1.0s`), và bộ đệm nhập hữu hạn `10,000` thông điệp (nếu quá tải sẽ dừng an toàn thay vì âm thầm làm rơi dữ liệu gây sai lệch).
 4. **Phạm vi chỉ đọc (Read-only Market Data):** Không gọi bất kỳ endpoint đặt lệnh thật nào; mọi thao tác khớp lệnh trong NeoScope là mô phỏng trên dữ liệu lịch sử hoặc sổ lệnh chụp lại.
 
@@ -128,9 +138,11 @@ Hệ thống NeoScope hoạt động theo mô hình Full-Stack tách biệt rõ 
 Các số liệu dưới đây được trích xuất trực tiếp từ `data/results/summary.json` (tập kiểm chứng chuẩn với `seed = 20261117`, `config_hash = 04c3812c60446fad`):
 
 ### 8.1. Quy mô làm sạch & truy vết dữ liệu
-- **Số phiên giao dịch:** `10` phiên (`2026-11-03` đến `2026-11-16`), chia thành `5` phiên tích lũy khởi tạo và `5` phiên kiểm thử ngoài mẫu (`2026-11-10` đến `2026-11-16`).
-- **Danh mục đối chứng 8 mã:** Nhóm VN30 thanh khoản lớn (`HPG`, `VCB`, `FPT`, `SSI`) và nhóm Midcap mỏng (`PDR`, `DIG`, `NLG`, `HCM`).
-- **Chất lượng dữ liệu qua pipeline:** Tổng cộng **`217,049`** bản ghi RAW → **`216,165`** bản ghi Curated sạch (đã nhận diện và loại bỏ chính xác **`884`** bản ghi trùng lặp).
+- **Dữ liệu mô phỏng:** `10` phiên (`2026-11-03` đến `2026-11-16`), chia thành `5` phiên tích lũy khởi tạo và `5` phiên kiểm thử ngoài mẫu (`2026-11-10` đến `2026-11-16`).
+- **Danh mục mô phỏng 8 mã:** Nhóm VN30 thanh khoản lớn (`HPG`, `VCB`, `FPT`, `SSI`) và nhóm Midcap mỏng (`PDR`, `DIG`, `NLG`, `HCM`).
+- **Chất lượng dữ liệu mô phỏng qua pipeline:** Tổng cộng **`217,049`** bản ghi RAW → **`216,165`** bản ghi Curated sạch (đã nhận diện và loại bỏ chính xác **`884`** bản ghi trùng lặp).
+- **Phiên LIVE SSI đã ghi thực nghiệm vào 20/11/2026:** Capture hoàn tất ghi **182.282 thông điệp RAW** trong namespace `LIVE_SSI_2026-11-20_085436_aaca05a4`. Sau `process`, phiên có **157.676 snapshots**, **1.800 bars**, 173.481 bản ghi RAW được đọc và 15.805 bản ghi lặp bị loại; sau `analyze`, hệ thống ghi nhận **1.906 cảnh báo** trên 2 phiên và **14.090 resilience episodes**.
+- **Phân biệt bằng chứng:** Kết quả mô phỏng mục 8.2–8.4 dùng làm bằng chứng cơ chế và kiểm chứng thuật toán; capture LIVE SSI ở trên mới ghi nhận dữ liệu thị trường thực, chưa được dùng để thay thế quy mô/cách tính của bộ kiểm chứng mô phỏng nếu chưa chạy lại toàn bộ `validate` trên tập LIVE.
 
 ### 8.2. Kết quả kiểm chứng mô hình Implementation Shortfall ngoài mẫu (`n = 1,200` lệnh test)
 | Mô hình | Tập đánh giá | Số lệnh (n) | MAE (bps) | RMSE (bps) | Bias (bps) |
@@ -165,7 +177,7 @@ Các số liệu dưới đây được trích xuất trực tiếp từ `data/r
 - **Khả năng phục hồi độ sâu sau cú sốc khối lượng:** Nhóm **VN30 lớn** (`4,540` episodes: median `5.0s`, p90 `10.0s`, tỷ lệ chưa phục hồi **`0.44%`**) phục hồi bền vững hơn nhóm **Midcap mỏng** (`4,283` episodes: median `5.0s`, p90 `10.0s`, tỷ lệ chưa phục hồi **`0.51%`**).
 
 ### 8.5. Kiểm thử phần mềm tự động
-- **Bộ unit test TypeScript (`node --test` qua `tsx --test`):** `29/29` test vượt qua hoàn toàn ở lần chạy gần nhất (bao gồm kiểm tra công thức trọng số LHS & Spearman $\rho$, lọc tín hiệu Vol/LHS, sắp xếp watchlist theo $\sigma$ 1 phút, logic tính giá trị quét sổ và mô hình chia nhỏ lệnh `buildOrderSlicingComparison`).
+- **Bộ kiểm thử tự động:** Có kiểm thử Python cho pipeline, chuẩn hóa dữ liệu, tài chính, an toàn và hỗn loạn; bộ unit test TypeScript kiểm tra công thức trọng số LHS & Spearman $\rho$, lọc tín hiệu Vol/LHS, sắp xếp watchlist theo $\sigma$ 1 phút, logic quét sổ và mô hình chia nhỏ lệnh `buildOrderSlicingComparison`. Các kết quả cụ thể cần lấy từ lần chạy kiểm thử cuối cùng thay vì ghi số lượng cố định trong báo cáo.
 
 ---
 
@@ -215,7 +227,7 @@ NeoScope chứng minh rằng việc khai thác dữ liệu vi cấu trúc cấp 
    neoscope validate
    ```
 4. **Kiểm tra cấu hình kết nối thực tế (Live Probe không làm lộ key):**
-   - Khai báo `SSI_CLIENT_ID`, `SSI_API_KEY`, `SSI_API_SECRET` (hoặc `NEO_USERNAME`, `NEO_PASSWORD`) trong `.env` server-side.
+   - Khai báo `SSI_API_KEY`, `SSI_API_SECRET` (hoặc `NEO_USERNAME`, `NEO_PASSWORD`) trong `.env` server-side.
    - Mở tab **Dữ liệu & chất lượng** trên web → nhấn **Chạy kiểm tra kết nối (API Probe)** để xác nhận quá trình lấy token / bắt tay REST với giới hạn 5 req/s.
 5. **Lưu ý hồ sơ nộp bài cuối kỳ (Sinh viên bổ sung khi xuất PDF):**
    - Đính kèm **email chấp thuận của giảng viên** cho phép sử dụng nguồn dữ liệu thay thế **SSI FastConnect API** theo điều khoản đề bài.

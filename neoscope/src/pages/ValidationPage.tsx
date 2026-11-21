@@ -1,13 +1,15 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { Download, Radio } from 'lucide-react';
 import { PlotlyChart } from '../components/PlotlyChart';
-import { C_ACCENT, C_BAD, C_GOOD, C_LARGE, C_THIN, fmtNum, fmtVnd, MODEL_COLORS } from '../lib/format';
+import { C_ACCENT, C_BAD, C_GOOD, C_LARGE, C_THIN, downloadCsv, fmtNum, fmtVnd, MODEL_COLORS } from '../lib/format';
 
 interface ValidationPageProps {
+  dataset?: string;
   summary: any;
   results: any;
 }
 
-export const ValidationPage: React.FC<ValidationPageProps> = ({ summary, results }) => {
+export const ValidationPage: React.FC<ValidationPageProps> = ({ dataset = '', summary, results }) => {
   const metrics: any[] = results?.metrics || [];
   const mcov: any[] = results?.metrics_coverage || [];
   const cov: any[] = results?.coverage || [];
@@ -19,16 +21,23 @@ export const ValidationPage: React.FC<ValidationPageProps> = ({ summary, results
     fullPreds: any[];
     resilience: any[];
     failureCases: any | null;
+    calibrationCurve: any[];
+    calibrationCurveAll: any[];
+    liveBenchmark: { hasLiveSessions: boolean; providers: any[] } | null;
   }>({
     fullPreds: [],
     resilience: [],
     failureCases: null,
+    calibrationCurve: [],
+    calibrationCurveAll: [],
+    liveBenchmark: null,
   });
   const [failureFilter, setFailureFilter] = useState<'all' | 'outside_pi'>('all');
 
   useEffect(() => {
     let cancelled = false;
-    fetch('/api/validation/extra')
+    const qs = dataset ? `?dataset=${encodeURIComponent(dataset)}` : '';
+    fetch(`/api/validation/extra${qs}`)
       .then((r) => r.json())
       .then((d) => {
         if (!cancelled) {
@@ -36,6 +45,9 @@ export const ValidationPage: React.FC<ValidationPageProps> = ({ summary, results
             fullPreds: d.fullPreds || [],
             resilience: d.resilience || [],
             failureCases: d.failureCases || null,
+            calibrationCurve: d.calibrationCurve || [],
+            calibrationCurveAll: d.calibrationCurveAll || [],
+            liveBenchmark: d.liveBenchmark || null,
           });
         }
       })
@@ -43,7 +55,7 @@ export const ValidationPage: React.FC<ValidationPageProps> = ({ summary, results
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [dataset]);
 
   const metricsBarData = useMemo(() => {
     return metrics
@@ -264,14 +276,50 @@ export const ValidationPage: React.FC<ValidationPageProps> = ({ summary, results
   const bootBeyond = summary?.bootstrap_full_vs_ladder_beyond_book;
   const covBeyond = cov.find((r) => r.group === 'ALL:beyond_book');
 
+  const exportOosReportCsv = () => {
+    const outRows: any[][] = [];
+    for (const m of metrics) {
+      outRows.push(['metrics_overall', m.model, m.group, m.n, m.mae_bps, m.rmse_bps, m.bias_bps, '']);
+    }
+    for (const r of mcov) {
+      outRows.push(['metrics_regime', r.model, r.regime, r.n, r.mae_bps, r.rmse_bps, r.bias_bps, '']);
+    }
+    for (const c of extra.calibrationCurve) {
+      outRows.push([
+        'calibration_beyond_book',
+        `PI_${c.nominalPct}%`,
+        'beyond_book',
+        c.n,
+        c.empiricalPct.toFixed(2),
+        c.meanWidthBps.toFixed(2),
+        c.calibrationGapPct.toFixed(2),
+        `Wilson[${c.wilsonLoPct.toFixed(1)},${c.wilsonHiPct.toFixed(1)}]`,
+      ]);
+    }
+    downloadCsv(
+      `neoscope_oos_report_${dataset || 'SYNTHETIC'}.csv`,
+      ['section', 'model_or_level', 'group_or_regime', 'n', 'mae_or_emp_pct', 'rmse_or_width', 'bias_or_gap', 'ci_or_note'],
+      outRows,
+    );
+  };
+
   return (
     <div>
-      <h2 className="page-subheader">Kiểm chứng · Ước tính đáng tin đến đâu?</h2>
-      <p className="page-caption">
-        Walk-forward 5 folds (train 1..k → test k+1), bootstrap THEO CỤM PHIÊN, độ phủ PI + Wilson
-        CI, phân rã theo chế độ phủ sổ. Đưa cả điểm yếu lên giao diện là chủ đích: kết quả không
-        được trình bày vượt quá khả năng mô hình.
-      </p>
+      <div className="h2h-header-row" style={{ marginBottom: 4 }}>
+        <div>
+          <h2 className="page-subheader" style={{ marginBottom: 4 }}>
+            Kiểm chứng · Ước tính đáng tin đến đâu?
+          </h2>
+          <p className="page-caption" style={{ marginBottom: 6 }}>
+            Walk-forward 5 folds (train 1..k → test k+1), bootstrap THEO CỤM PHIÊN, độ phủ PI + Wilson
+            CI, phân rã theo chế độ phủ sổ. Đưa cả điểm yếu lên giao diện là chủ đích: kết quả không
+            được trình bày vượt quá khả năng mô hình.
+          </p>
+        </div>
+        <button type="button" id="export-oos-csv-btn" className="btn" onClick={exportOosReportCsv}>
+          <Download size={14} /> Xuất báo cáo OOS (.csv)
+        </button>
+      </div>
 
       <div className="grid-2-weighted">
         <div>
@@ -498,6 +546,102 @@ export const ValidationPage: React.FC<ValidationPageProps> = ({ summary, results
           {(covBeyond.wilson_hi * 100).toFixed(1)}%], n={covBeyond.n}). Độ phủ toàn mẫu cao hơn
           danh nghĩa vì lệnh trong sổ có PI suy biến bề rộng 0 — đã tách bạch để không ‘khoe’ độ phủ
           ảo.
+        </div>
+      )}
+
+      {extra.calibrationCurve.length > 0 && (
+        <div className="card-panel" id="calibration-curve-card" style={{ marginTop: 16 }}>
+          <div className="narrative-head" style={{ marginBottom: 8 }}>
+            <span className="narrative-badge">Bloom #5 · Độ tin cậy xác suất</span>
+            <h4 className="narrative-title">
+              Đường cong hiệu chỉnh đa mức tin cậy (50% / 80% / 90% / 95% · chế độ vượt sổ)
+            </h4>
+          </div>
+          <div className="grid-2">
+            <div>
+              <PlotlyChart
+                data={[
+                  {
+                    type: 'scatter',
+                    mode: 'lines',
+                    x: [50, 80, 90, 95],
+                    y: [50, 80, 90, 95],
+                    name: 'Đường hiệu chỉnh lý tưởng (y = x)',
+                    line: { dash: 'dash', color: '#94a3b8', width: 1.5 },
+                  },
+                  {
+                    type: 'scatter',
+                    mode: 'lines+markers',
+                    x: extra.calibrationCurve.map((c) => c.nominalPct),
+                    y: extra.calibrationCurve.map((c) => c.empiricalPct),
+                    error_y: {
+                      type: 'data',
+                      symmetric: false,
+                      array: extra.calibrationCurve.map((c) => c.wilsonHiPct - c.empiricalPct),
+                      arrayminus: extra.calibrationCurve.map((c) => c.empiricalPct - c.wilsonLoPct),
+                      color: C_ACCENT,
+                    },
+                    name: 'Thực nghiệm vượt sổ (Wilson CI95)',
+                    line: { color: C_ACCENT, width: 2.5 },
+                    marker: { size: 8, color: C_LARGE },
+                  },
+                ]}
+                height={300}
+                title="Độ phủ danh nghĩa vs thực nghiệm ngoài mẫu"
+                layout={{
+                  xaxis: { title: 'Mức tin cậy danh nghĩa (%)', tickvals: [50, 80, 90, 95] },
+                  yaxis: { title: 'Độ phủ thực nghiệm (%)', range: [35, 102] },
+                  margin: { l: 54, r: 22, t: 54, b: 44 },
+                }}
+                alt="So sánh độ phủ danh nghĩa 50%, 80%, 90%, 95% với độ phủ thực nghiệm trên lệnh vượt sổ."
+              />
+            </div>
+            <div>
+              <div className="table-wrap">
+                <table className="neo-table compact">
+                  <thead>
+                    <tr>
+                      <th>Danh nghĩa</th>
+                      <th className="num">Thực nghiệm</th>
+                      <th className="num">Wilson CI 95%</th>
+                      <th className="num">Chênh lệch</th>
+                      <th className="num">Rộng TB (bps)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {extra.calibrationCurve.map((c) => (
+                      <tr key={c.nominalPct}>
+                        <td>
+                          <strong>{c.nominalPct}%</strong> (z={c.zValue})
+                        </td>
+                        <td className="num">
+                          <strong>{c.empiricalPct.toFixed(1)}%</strong>
+                        </td>
+                        <td className="num mono">
+                          [{c.wilsonLoPct.toFixed(1)}%, {c.wilsonHiPct.toFixed(1)}%]
+                        </td>
+                        <td
+                          className="num"
+                          style={{
+                            color: Math.abs(c.calibrationGapPct) <= 5 ? '#4dd0c1' : '#fbbf24',
+                            fontWeight: 700,
+                          }}
+                        >
+                          {c.calibrationGapPct >= 0 ? '+' : ''}
+                          {c.calibrationGapPct.toFixed(1)}%
+                        </td>
+                        <td className="num">{c.meanWidthBps.toFixed(1)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="small-caption" style={{ marginBottom: 0 }}>
+                Khoảng tin cậy không suy biến trên {extra.calibrationCurve[0]?.n ?? 0} lệnh{' '}
+                <strong>vượt sổ</strong>. Nếu đường thực nghiệm nằm dưới y=x tức đuôi thực tế dày hơn phân phối chuẩn (tail risk).
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
@@ -761,6 +905,76 @@ export const ValidationPage: React.FC<ValidationPageProps> = ({ summary, results
           </div>
         );
       })()}
+
+      {extra.liveBenchmark && (
+        <div className="card-panel" id="live-benchmark-card" style={{ marginTop: 18 }}>
+          <div className="narrative-head" style={{ marginBottom: 8 }}>
+            <span className="narrative-badge">
+              <Radio size={12} style={{ marginRight: 4, verticalAlign: '-1px' }} />
+              Chuẩn đối chiếu Synthetic vs Live
+            </span>
+            <h4 className="narrative-title">
+              Sẵn sàng kiểm chứng trên phiên LIVE thực tế (SSI FastConnect v3 / VPBankS NEO)
+            </h4>
+          </div>
+          <div className="table-wrap">
+            <table className="neo-table compact">
+              <thead>
+                <tr>
+                  <th>Nguồn dữ liệu</th>
+                  <th className="num">Số phiên curated</th>
+                  <th className="num">Số lệnh OOS</th>
+                  <th className="num">MAE full (bps)</th>
+                  <th className="num">LHS IC</th>
+                  <th>Trạng thái trung thực</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>
+                    <strong>SYNTHETIC (Kiểm chứng cơ chế)</strong>
+                  </td>
+                  <td className="num">{Number(summary?.dataset?.n_sessions ?? 10)}</td>
+                  <td className="num">{Number(summary?.orders?.n ?? 0).toLocaleString('en-US')}</td>
+                  <td className="num">
+                    {(() => {
+                      const fm = metrics.find((m) => m.model === 'full' && m.group === 'ALL');
+                      return fm ? Number(fm.mae_bps).toFixed(2) : '—';
+                    })()}
+                  </td>
+                  <td className="num">{Number(summary?.lhs_ic_overall ?? 0).toFixed(3)}</td>
+                  <td>
+                    <span className="resilience-group-pill large">Đã chạy 5-fold</span>
+                  </td>
+                </tr>
+                {(extra.liveBenchmark.providers || []).map((p: any) => (
+                  <tr key={p.id}>
+                    <td>
+                      <strong>{p.label}</strong>
+                    </td>
+                    <td className="num">{p.sessions}</td>
+                    <td className="num">{p.sessions > 0 ? p.nOrders.toLocaleString('en-US') : '—'}</td>
+                    <td className="num">{p.maeFullBps != null ? Number(p.maeFullBps).toFixed(2) : '—'}</td>
+                    <td className="num">{p.lhsIcOverall != null ? Number(p.lhsIcOverall).toFixed(3) : '—'}</td>
+                    <td>
+                      {p.sessions > 0 ? (
+                        <span className="resilience-group-pill large">Có dữ liệu Live thật</span>
+                      ) : (
+                        <span className="resilience-group-pill thin">
+                          0 phiên · sẵn sàng nạp từ pipeline ingest → analyze
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="small-caption" style={{ marginBottom: 0 }}>
+            NeoScope tuyệt đối không bịa số liệu thị trường thật. Khi có phiên curated trong <code>data/curated/LIVE_*</code>, bảng này tự động cập nhật chỉ số kiểm chứng thực tế.
+          </div>
+        </div>
+      )}
 
       <div className="card-panel" style={{ marginTop: 18 }}>
         <h4 style={{ margin: '0 0 8px 0', color: '#e8f0fc' }}>

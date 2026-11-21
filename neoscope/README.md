@@ -18,12 +18,12 @@ The product makes the revised Bloom progression observable in deliverables:
 
 | Level | User action | Product evidence |
 |---|---|---|
-| Remember | Identify provider topics, canonical fields, units, and limitations | NEO/SSI provider mappings and data dictionary |
-| Understand | Explain why spread, depth, imbalance, and adverse-selection proxies matter | Research dashboard and method notes |
-| Apply | Capture a session and reproduce normalized measures | Provider recorder, append-only capture with finalized SHA-256 manifest, and curated pipeline |
-| Analyze | Compare liquidity regimes and decompose execution cost | LHS, microstructure measures, alerts, and paper simulator |
-| Evaluate | Judge stability and uncertainty on later sessions | Walk-forward folds, cluster bootstrap, coverage, and quality diagnostics |
-| Create | Formulate a follow-up hypothesis and define a cohort/evaluation protocol | Reusable session data, config-driven cohorts, and reproducible pipeline |
+| Remember | Identify provider topics, canonical fields, units, and limitations | Interactive Glossary (`?`), NEO/SSI provider mappings, and Data Dictionary |
+| Understand | Explain why spread, depth, imbalance, and intraday U-shape matter | Research dashboard, 3-Step Workflow Guide, and 15-minute Intraday U-Shape Effective vs Quoted Spread profile |
+| Apply | Capture a session, probe dual APIs, and reproduce normalized measures | Provider recorder (`SSI` primary + `NEO` backup), SSI REST Context (`Securities` + `DailyOHLCHistory`), SHA-256 manifest, and curated pipeline |
+| Analyze | Compare liquidity regimes, systemic commonality, and portfolio stress | LHS, Liquidity Beta Commonality (Chordia et al. 2000), Portfolio Stress Check, Failure Case Explorer, and paper simulator |
+| Evaluate | Judge stability, uncertainty calibration, and fault resilience | Walk-forward folds, cluster bootstrap, Multi-Confidence Calibration Curve (50/80/90/95%), Chaos Fault Injection Lab, and System Self-Check |
+| Create | Synthesize execution playbooks and calibrate new alert rule protocols | Execution Playbook `.md`/`.csv` synthesizer and Alert Rule & Threshold Lab (`z`/percentile/persistence/cooldown sweep + `.json` protocol export) |
 
 Scores and alerts support investigation; they do not substitute for a researcher's interpretation or independent validation.
 
@@ -40,7 +40,18 @@ neoscope --mode SYNTHETIC all --force
 neoscope --mode SYNTHETIC app
 ```
 
-The explicit mode flag takes precedence over a machine-level `NEOSCOPE_MODE`, so the offline demo still works when the shell is configured for LIVE. Open the localhost Streamlit URL shown in the terminal. The synthetic banner and manifest identify simulated data; never cite these outputs as market evidence.
+The explicit mode flag takes precedence over a machine-level `NEOSCOPE_MODE`, so the offline demo still works when the shell is configured for LIVE. The synthetic banner and manifest identify simulated data; never cite these outputs as market evidence.
+
+### Interactive Web Research Terminal (Node.js / Express + React / Vite)
+
+Besides the Python/Streamlit CLI (`neoscope app`), NeoScope includes an Express + React/TypeScript web application on port `3000` with TradingView-style dark theming, interactive Plotly diagnostics, Threshold Lab, Portfolio Stress Check, Execution Playbook export, Chaos Lab, and live SSI/NEO health probes:
+
+```bash
+npm install
+npm run dev      # Express API + Vite SPA on http://localhost:3000
+npm test         # 30 TypeScript unit tests (liquidity math, portfolio stress, U-shape, beta, calibration, alert lab, chaos/security)
+npm run build    # Production Vite bundle
+```
 
 ## Live provider selection
 
@@ -81,7 +92,7 @@ Reproducible synthetic stream ─┘          → microstructure indicators → 
                                               → Streamlit research dashboard
 ```
 
-The dashboard is organized into seven pages under **Analysis** and **Research administration**, presented with a unified dark design system (`src/neoscope/app/theme.py`). The **overview** opens with a full hero banner and status pills (provider/mode/session/freshness/timezone), KPI cards with session-over-session delta chips, an Alert Pulse feed, paired market-breadth/liquidity-rank charts, a per-symbol **intraday liquidity tape** (mid, last price and displayed depth both sides), and a watchlist table with **LHS sparklines** plus CSV export. The other pages open with a compact one-line status strip so analysis content starts immediately: **Liquidity** adds an LHS gauge, the two-symbol **Liquidity Radar** (five LHS components), an intraday LHS distribution by liquidity group and weight-sensitivity robustness; **Execution** shows the cost model, book ladder, IS waterfall, benchmarks and the paper-simulator chamber; **Alerts** adds KPI cards, an **alert timeline** (time × type, sized/colored by priority), full evidence drill-down, ground-truth precision/recall and CSV export; **Validation** presents walk-forward MAE, session-cluster bootstrap CIs, PI coverage, LHS information coefficient and honest limitations. A shared session/watchlist filter, provider/mode state, last event timestamp, and refresh control remain visible across the workflow, and every page closes with a consistent methodology footer. KPI values use each symbol's **last valid** observation (null book states at ATO/ATC closes are skipped, never shown as "—"). Empty, stale, and unavailable-data states explain what the user can check next. The paper matching engine is isolated from all provider clients.
+The dashboard is organized into seven pages under **Analysis** and **Research administration**, implemented in React/TypeScript + Express (`server.ts`, `src/pages/*`) alongside the original Python pipeline (`src/neoscope/`). The **overview** opens with a hero banner and status pills (provider/mode/session/freshness/timezone), KPI cards with session-over-session deltas, an Alert Pulse feed, paired market-breadth/liquidity-rank charts, a per-symbol **intraday liquidity tape**, and a watchlist table with **LHS sparklines** plus CSV export. Across the workflow: **Liquidity** adds an LHS gauge, two-symbol **Liquidity Radar**, weight-sensitivity robustness, **Intraday U-Shape 15' Profile (Effective vs Quoted Spread)**, **Liquidity Beta Commonality**, and a **Portfolio Stress Check** simulator; **Execution** shows the cost model, 3-level DOM, 50M–5B VND cost curve, 1/2/4/8 slicing comparator, Head-to-Head comparator, **Execution Playbook (.md/.csv)** synthesizer, and the paper simulator; **Alerts** adds KPI cards, timeline, full evidence drill-down, ground-truth P/R, and the interactive **Alert Rule & Threshold Lab** (`neoscope.alert_protocol.v1` JSON export); **Validation** presents walk-forward MAE, session-cluster bootstrap CIs, **Multi-Confidence Calibration Curve (50/80/90/95%)**, Failure Case Explorer, Live vs Synthetic Benchmark readiness, and OOS CSV export; **Data Quality** adds Dual SSI + NEO API probes, **SSI REST Context (`Securities` + `DailyOHLCHistory`)**, **Chaos Fault Injection Lab**, **System Self-Check**, quality-flag heatmaps, and SHA-256 manifests. A shared `?` **Microstructure Glossary & 3-Step Bloom Workflow** modal remains accessible throughout. Empty, stale, and unavailable-data states explain what the user can check next. The paper matching engine is isolated from all provider clients.
 
 ## Reproducibility and safety
 

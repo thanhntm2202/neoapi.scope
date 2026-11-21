@@ -2,6 +2,9 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Download, Maximize2, Minimize2 } from 'lucide-react';
 import { PlotlyChart } from '../components/PlotlyChart';
 import { AlertFeed, KpiGrid, SectionHeading, Sparkline } from '../components/ThemeParts';
+import { WatchlistHeatmap } from '../components/WatchlistHeatmap';
+import { LiquidityHeatmap } from '../components/LiquidityHeatmap';
+import { OrderBookImbalance } from '../components/OrderBookImbalance';
 import {
   C_ACCENT,
   C_BAD,
@@ -725,6 +728,24 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
         </div>
       </div>
 
+      <WatchlistHeatmap
+        symbols={symbols}
+        watchlist={sessionData?.watchlist || []}
+        barsLhs={sessionData?.barsLhs || []}
+        loading={sessionLoading}
+        activeSymbol={tapeSym}
+        onSelectSymbol={(sym) => selectTapeSymbol(sym, true)}
+      />
+
+      <LiquidityHeatmap
+        symbols={symbols}
+        watchlist={sessionData?.watchlist || []}
+        barsLhs={sessionData?.barsLhs || []}
+        loading={sessionLoading}
+        activeSymbol={tapeSym}
+        onSelectSymbol={(sym) => selectTapeSymbol(sym, true)}
+      />
+
       {availableSyms.length > 0 && (
         <div
           id="intraday-tape-section"
@@ -935,6 +956,16 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
             )}
           </div>
         </div>
+      )}
+
+      {availableSyms.length > 0 && tapeSym && (
+        <OrderBookImbalance
+          symbol={tapeSym}
+          rows={filteredTapeRows}
+          focusRow={activeHudRow}
+          loading={tapeLoading}
+          windowLabel={TAPE_WINDOWS.find((w) => w.id === tapeWindow)?.label}
+        />
       )}
 
       <SectionHeading

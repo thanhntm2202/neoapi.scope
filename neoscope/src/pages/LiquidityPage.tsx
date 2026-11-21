@@ -1,12 +1,29 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { ChevronLeft, ChevronRight, Pause, Play, SlidersHorizontal } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { Activity, ChevronLeft, ChevronRight, Download, Pause, Play, ShieldAlert, SlidersHorizontal } from 'lucide-react';
 import { computeWeightedLhs, LhsWeights } from '../../server/liquidityMath';
 import { PlotlyChart } from '../components/PlotlyChart';
 import { SectionHeading } from '../components/ThemeParts';
-import { C_ACCENT, C_GRID, C_LARGE, C_MUTED, C_TEXT, C_THIN, fmtVnHm, toVnIsoLocal } from '../lib/format';
+import {
+  C_ACCENT,
+  C_BAD,
+  C_GOOD,
+  C_GRID,
+  C_LARGE,
+  C_MUTED,
+  C_TEXT,
+  C_THIN,
+  downloadCsv,
+  fmtNum,
+  fmtVnd,
+  fmtVnHm,
+  toVnIsoLocal,
+} from '../lib/format';
 import { buildIntradayHeatmapMatrix, HeatmapMetric } from '../lib/tradingview';
 
 interface LiquidityPageProps {
+  dataset?: string;
+  session?: string;
+  settings?: any;
   sessionData: any;
   symbols: string[];
   results: any;
@@ -50,6 +67,9 @@ const WEIGHT_PRESETS: { id: string; label: string; weights: LhsWeights }[] = [
 ];
 
 export const LiquidityPage: React.FC<LiquidityPageProps> = ({
+  dataset = '',
+  session = '',
+  settings,
   sessionData,
   symbols,
   results,
@@ -327,6 +347,208 @@ export const LiquidityPage: React.FC<LiquidityPageProps> = ({
     );
     return found ? found.id : 'custom';
   }, [weights]);
+
+  // Intraday U-Shape & Liquidity Beta Commonality
+  const [profileData, setProfileData] = useState<{
+    sessionsAnalyzed: number;
+    uShape: any[];
+    liquidityBeta: any[];
+  } | null>(null);
+  const [profileLoading, setProfileLoading] = useState(false);
+  const [uShapeMetric, setUShapeMetric] = useState<'spread' | 'depth' | 'volume'>('spread');
+
+  useEffect(() => {
+    if (!symbols.length) return;
+    let cancelled = false;
+    setProfileLoading(true);
+    const params = new URLSearchParams();
+    if (dataset) params.set('dataset', dataset);
+    params.set('symbols', symbols.join(','));
+    fetch(`/api/liquidity/profile?${params.toString()}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!cancelled && d) setProfileData(d);
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setProfileLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [dataset, symbols]);
+
+  const uShapeChartData = useMemo(() => {
+    const pts: any[] = profileData?.uShape || [];
+    if (!pts.length) return [];
+    const xs = pts.map((p) => p.slot);
+    if (uShapeMetric === 'spread') {
+      return [
+        {
+          type: 'scatter',
+          mode: 'lines+markers',
+          name: 'Quoted Spread · Toàn bộ (bps)',
+          x: xs,
+          y: pts.map((p) => p.allQuotedSpreadBps),
+          line: { color: C_ACCENT, width: 2.2 },
+        },
+        {
+          type: 'scatter',
+          mode: 'lines+markers',
+          name: 'Effective Spread · 2|P_last−Mid| (bps)',
+          x: xs,
+          y: pts.map((p) => p.allEffectiveSpreadBps),
+          line: { color: '#26a69a', width: 2, dash: 'dot' },
+        },
+        {
+          type: 'scatter',
+          mode: 'lines',
+          name: 'Quoted Spread · VN30 lớn',
+          x: xs,
+          y: pts.map((p) => p.largeQuotedSpreadBps),
+          line: { color: C_LARGE, width: 1.7 },
+        },
+        {
+          type: 'scatter',
+          mode: 'lines',
+          name: 'Quoted Spread · Midcap mỏng',
+          x: xs,
+          y: pts.map((p) => p.thinQuotedSpreadBps),
+          line: { color: C_THIN, width: 1.7, dash: 'dash' },
+        },
+      ];
+    }
+    if (uShapeMetric === 'depth') {
+      return [
+        {
+          type: 'scatter',
+          mode: 'lines+markers',
+          name: 'Độ sâu TB · VN30 lớn (tỷ đ)',
+          x: xs,
+          y: pts.map((p) => p.largeDepthB),
+          line: { color: C_LARGE, width: 2.2 },
+        },
+        {
+          type: 'scatter',
+          mode: 'lines+markers',
+          name: 'Độ sâu TB · Midcap mỏng (tỷ đ)',
+          x: xs,
+          y: pts.map((p) => p.thinDepthB),
+          line: { color: C_THIN, width: 2.2, dash: 'dash' },
+        },
+        {
+          type: 'scatter',
+          mode: 'lines',
+          name: 'Toàn watchlist (tỷ đ)',
+          x: xs,
+          y: pts.map((p) => p.allDepthB),
+          line: { color: '#94a3b8', width: 1.5, dash: 'dot' },
+        },
+      ];
+    }
+    return [
+      {
+        type: 'bar',
+        name: 'Tỷ trọng KL · VN30 lớn (%)',
+        x: xs,
+        y: pts.map((p) => p.largeVolSharePct),
+        marker: { color: C_LARGE, opacity: 0.8 },
+      },
+      {
+        type: 'bar',
+        name: 'Tỷ trọng KL · Midcap mỏng (%)',
+        x: xs,
+        y: pts.map((p) => p.thinVolSharePct),
+        marker: { color: C_THIN, opacity: 0.8 },
+      },
+    ];
+  }, [profileData, uShapeMetric]);
+
+  const betaChartData = useMemo(() => {
+    const rows: any[] = profileData?.liquidityBeta || [];
+    if (!rows.length) return [];
+    const sorted = [...rows].sort((a, b) => (a.depthBeta ?? 0) - (b.depthBeta ?? 0));
+    return [
+      {
+        type: 'bar',
+        orientation: 'h',
+        x: sorted.map((r) => r.depthBeta ?? 0),
+        y: sorted.map((r) => r.symbol),
+        marker: {
+          color: sorted.map((r) => (r.group === 'thin' ? C_THIN : C_LARGE)),
+        },
+        text: sorted.map((r) => (r.depthBeta != null ? Number(r.depthBeta).toFixed(2) : '—')),
+        textposition: 'outside',
+        hovertemplate: '%{y}: β_depth=%{x:.2f}<extra></extra>',
+      },
+    ];
+  }, [profileData]);
+
+  // Portfolio Liquidity & Exit Stress Check
+  const [portTotalVnd, setPortTotalVnd] = useState<number>(2_000_000_000);
+  const [portSide, setPortSide] = useState<1 | -1>(-1);
+  const [portWeights, setPortWeights] = useState<Record<string, number>>({});
+  const [portStress, setPortStress] = useState<any>(null);
+  const [portLoading, setPortLoading] = useState(false);
+
+  useEffect(() => {
+    if (!symbols.length) return;
+    setPortWeights((prev) => {
+      const next: Record<string, number> = {};
+      const defaultW = Math.round((100 / symbols.length) * 10) / 10;
+      for (const s of symbols) {
+        next[s] = prev[s] !== undefined ? prev[s] : defaultW;
+      }
+      return next;
+    });
+  }, [symbols]);
+
+  const applyPortPreset = (kind: 'equal' | 'large_heavy' | 'thin_heavy') => {
+    const largeSet = new Set<string>(settings?.watchlist?.large || []);
+    const next: Record<string, number> = {};
+    for (const s of symbols) {
+      if (kind === 'equal') next[s] = 100 / Math.max(symbols.length, 1);
+      else if (kind === 'large_heavy') next[s] = largeSet.has(s) ? 20 : 5;
+      else next[s] = largeSet.has(s) ? 5 : 20;
+    }
+    setPortWeights(next);
+  };
+
+  const runPortfolioStress = useCallback(async () => {
+    if (!symbols.length || !session) return;
+    const holdings = symbols.map((s) => ({
+      symbol: s,
+      weightPct: Number(portWeights[s] ?? 0),
+    }));
+    const totalW = holdings.reduce((acc, h) => acc + h.weightPct, 0);
+    if (totalW <= 0) return;
+    setPortLoading(true);
+    try {
+      const res = await fetch('/api/portfolio/stress', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          dataset,
+          session,
+          totalVnd: portTotalVnd,
+          side: portSide,
+          holdings,
+        }),
+      });
+      if (res.ok) {
+        const d = await res.json();
+        setPortStress(d);
+      }
+    } finally {
+      setPortLoading(false);
+    }
+  }, [dataset, session, symbols, portTotalVnd, portSide, portWeights]);
+
+  useEffect(() => {
+    if (symbols.length && session && Object.keys(portWeights).length > 0 && !portStress) {
+      runPortfolioStress();
+    }
+  }, [symbols.length, session, portWeights, portStress, runPortfolioStress]);
 
   if (!dayBars.length) {
     return <div className="callout warning">Chưa có LHS cho phiên này — chạy `neoscope analyze`.</div>;
@@ -767,6 +989,339 @@ export const LiquidityPage: React.FC<LiquidityPageProps> = ({
           </div>
         </div>
       )}
+
+      {/* Intraday U-Shape 15m Profile & Effective vs Quoted Spread */}
+      <div className="card-panel" id="intraday-ushape-card" style={{ marginTop: 18 }}>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: 10,
+            marginBottom: 8,
+          }}
+        >
+          <div>
+            <h3 className="sec-title" style={{ margin: 0, display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+              <Activity size={15} color="#29b6f6" />
+              Hồ sơ thanh khoản chữ U nội ngày (15′) &amp; Effective vs Quoted Spread
+            </h3>
+            <div className="sec-note" style={{ margin: '2px 0 0 0' }}>
+              Tổng hợp trên {profileData?.sessionsAnalyzed ?? 0} phiên (giờ HOSE UTC+7): chứng minh spread thường giãn khi mở/đóng cửa và vì sao cần chuẩn hóa cảnh báo theo khung giờ.
+            </div>
+          </div>
+          <div className="tv-seg-group" role="group" aria-label="Chỉ số đồ thị chữ U">
+            <button
+              type="button"
+              className={`tv-seg-btn ${uShapeMetric === 'spread' ? 'active' : ''}`}
+              onClick={() => setUShapeMetric('spread')}
+            >
+              Quoted vs Effective Spread
+            </button>
+            <button
+              type="button"
+              className={`tv-seg-btn ${uShapeMetric === 'depth' ? 'active' : ''}`}
+              onClick={() => setUShapeMetric('depth')}
+            >
+              Độ sâu 3 mức
+            </button>
+            <button
+              type="button"
+              className={`tv-seg-btn ${uShapeMetric === 'volume' ? 'active' : ''}`}
+              onClick={() => setUShapeMetric('volume')}
+            >
+              Tỷ trọng KL (%)
+            </button>
+          </div>
+        </div>
+
+        {profileLoading && <div className="skeleton-bar" aria-label="Đang tính hồ sơ nội ngày" />}
+
+        {uShapeChartData.length > 0 && (
+          <PlotlyChart
+            data={uShapeChartData}
+            height={340}
+            title={
+              uShapeMetric === 'spread'
+                ? 'Hồ sơ 15 phút: Effective Spread (2|P_last−Mid|) vs Quoted Spread (bps)'
+                : uShapeMetric === 'depth'
+                  ? 'Hồ sơ 15 phút: Độ sâu hiển thị 3 mức trung vị (tỷ VND)'
+                  : 'Hồ sơ 15 phút: Phân bổ tỷ trọng khối lượng giao dịch theo khung giờ (%)'
+            }
+            layout={{
+              barmode: uShapeMetric === 'volume' ? 'group' : undefined,
+              xaxis: { type: 'category', title: 'Khung 15 phút (UTC+7)' },
+              yaxis: {
+                title: uShapeMetric === 'spread' ? 'bps' : uShapeMetric === 'depth' ? 'tỷ VND' : '% khối lượng',
+                rangemode: 'tozero',
+              },
+              legend: { orientation: 'h', yanchor: 'bottom', y: 1.03, x: 0 },
+              margin: { l: 54, r: 22, t: 72, b: 44 },
+            }}
+            alt="Biểu đồ hồ sơ thanh khoản hình chữ U theo khung giờ 15 phút."
+          />
+        )}
+      </div>
+
+      {/* Liquidity Beta Commonality */}
+      {profileData && Array.isArray(profileData.liquidityBeta) && profileData.liquidityBeta.length > 0 && (
+        <div className="card-panel" id="liquidity-beta-card" style={{ marginTop: 18 }}>
+          <h3 className="sec-title" style={{ marginTop: 0 }}>
+            Liquidity Beta · Độ nhạy thanh khoản hệ thống (Commonality, Chordia et al. 2000)
+          </h3>
+          <p className="sec-note" style={{ marginTop: 2 }}>
+            Hồi quy Δln(Depth_i,t) và ΔSpread_i,t theo biến động trung vị toàn watchlist. Mã có β &gt; 1 dễ hụt độ sâu đồng loạt khi thị trường chung căng thẳng.
+          </p>
+          <div className="grid-2-weighted" style={{ alignItems: 'start' }}>
+            <PlotlyChart
+              data={betaChartData}
+              height={320}
+              title="Hệ số β độ sâu theo mã (cao = nhạy rủi ro hệ thống)"
+              layout={{
+                xaxis: {
+                  title: 'Liquidity Depth β',
+                  range: [
+                    0,
+                    Math.max(
+                      1.05,
+                      ...((profileData?.liquidityBeta || []).map((r: any) => Number(r.depthBeta ?? 0))),
+                    ) * 1.18,
+                  ],
+                },
+                margin: { l: 56, r: 44, t: 48, b: 44 },
+              }}
+              alt="Biểu đồ thanh ngang hệ số Liquidity Beta của từng mã."
+            />
+            <div className="table-wrap">
+              <table className="neo-table compact">
+                <thead>
+                  <tr>
+                    <th>Mã</th>
+                    <th>Nhóm</th>
+                    <th className="num">Depth β</th>
+                    <th className="num">R² Depth</th>
+                    <th className="num">Spread β</th>
+                    <th>Nhận định hệ thống</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {profileData.liquidityBeta.map((r: any) => (
+                    <tr key={r.symbol}>
+                      <td className="mono" style={{ fontWeight: 700, color: '#f0f3fa' }}>{r.symbol}</td>
+                      <td>{r.group === 'thin' ? 'Midcap mỏng' : 'VN30 lớn'}</td>
+                      <td className="num"><strong>{fmtNum(r.depthBeta, 2)}</strong></td>
+                      <td className="num">{r.depthR2 != null ? `${(r.depthR2 * 100).toFixed(1)}%` : '—'}</td>
+                      <td className="num">{fmtNum(r.spreadBeta, 2)}</td>
+                      <td style={{ fontSize: 12 }}>{r.regimeNote}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Portfolio Liquidity & Exit Stress Check */}
+      <div className="card-panel" id="portfolio-stress-card" style={{ marginTop: 18 }}>
+        <div className="probe-header-row">
+          <div>
+            <h3 className="sec-title" style={{ margin: 0, display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+              <ShieldAlert size={15} color="#f59e0b" />
+              Kiểm tra Stress Thanh khoản &amp; Thoát Danh Mục (Portfolio Stress Check)
+            </h3>
+            <div className="sec-note" style={{ margin: '2px 0 0 0' }}>
+              Mô phỏng chi phí thoát đồng thời toàn danh mục ở kịch bản bình thường vs căng thẳng (độ sâu giảm 50%, spread giãn ×2).
+            </div>
+          </div>
+          <button
+            type="button"
+            id="run-portfolio-stress-btn"
+            className="btn btn-primary"
+            onClick={runPortfolioStress}
+            disabled={portLoading || !session}
+          >
+            {portLoading ? 'Đang tính Stress…' : 'Cập nhật Stress Danh Mục'}
+          </button>
+        </div>
+
+        <div className="grid-3" style={{ marginTop: 10, marginBottom: 10 }}>
+          <div>
+            <label className="field-label" htmlFor="port-total-select">Tổng giá trị danh mục (VND)</label>
+            <select
+              id="port-total-select"
+              className="select-input"
+              value={portTotalVnd}
+              onChange={(e) => setPortTotalVnd(Number(e.target.value))}
+            >
+              <option value={500_000_000}>500 triệu đ</option>
+              <option value={1_000_000_000}>1 tỷ đ</option>
+              <option value={2_000_000_000}>2 tỷ đ</option>
+              <option value={5_000_000_000}>5 tỷ đ</option>
+              <option value={10_000_000_000}>10 tỷ đ</option>
+            </select>
+          </div>
+          <div>
+            <span className="field-label">Chiều giao dịch tái cơ cấu</span>
+            <div className="radio-group">
+              <button
+                type="button"
+                className={`radio-pill sell ${portSide === -1 ? 'active' : ''}`}
+                onClick={() => setPortSide(-1)}
+              >
+                THOÁT BÁN
+              </button>
+              <button
+                type="button"
+                className={`radio-pill buy ${portSide === 1 ? 'active' : ''}`}
+                onClick={() => setPortSide(1)}
+              >
+                GIẢI NGÂN MUA
+              </button>
+            </div>
+          </div>
+          <div>
+            <span className="field-label">Tỷ trọng nhanh</span>
+            <div className="tv-seg-group">
+              <button type="button" className="tv-seg-btn" onClick={() => applyPortPreset('equal')}>
+                Chia đều
+              </button>
+              <button type="button" className="tv-seg-btn" onClick={() => applyPortPreset('large_heavy')}>
+                Ưu tiên VN30
+              </button>
+              <button type="button" className="tv-seg-btn" onClick={() => applyPortPreset('thin_heavy')}>
+                Nặng Midcap
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="portfolio-weights-grid">
+          {symbols.map((s) => (
+            <div key={s} className="portfolio-weight-chip">
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11.5 }}>
+                <strong className="mono" style={{ color: '#f0f3fa' }}>{s}</strong>
+                <span className="mono" style={{ color: '#29b6f6' }}>{Number(portWeights[s] ?? 0).toFixed(0)}%</span>
+              </div>
+              <input
+                type="range"
+                className="range-slider"
+                min={0}
+                max={60}
+                step={5}
+                value={Number(portWeights[s] ?? 0)}
+                onChange={(e) =>
+                  setPortWeights((prev) => ({ ...prev, [s]: Number(e.target.value) }))
+                }
+              />
+            </div>
+          ))}
+        </div>
+
+        {portStress && (
+          <div style={{ marginTop: 12 }}>
+            <div className="metric-grid">
+              <div className="metric-card">
+                <div className="m-label">LHS danh mục (gia quyền)</div>
+                <div className="m-val">
+                  {portStress.weightedLhs != null ? `${Number(portStress.weightedLhs).toFixed(1)}/100` : '—'}
+                </div>
+              </div>
+              <div className="metric-card">
+                <div className="m-label">Phủ sổ bình thường → Stress</div>
+                <div className="m-val">
+                  {Number(portStress.normalCoveragePct).toFixed(0)}% →{' '}
+                  <span style={{ color: '#fbbf24' }}>{Number(portStress.stressedCoveragePct).toFixed(0)}%</span>
+                </div>
+              </div>
+              <div className="metric-card">
+                <div className="m-label">Tổng chi phí bình thường</div>
+                <div className="m-val">{fmtVnd(portStress.normalTotalVnd)} đ</div>
+                <div className="m-delta">{Number(portStress.normalTotalBps).toFixed(1)} bps (gồm phí/thuế)</div>
+              </div>
+              <div className="metric-card">
+                <div className="m-label">Tổng chi phí Stress (×2 Spread, ½ Depth)</div>
+                <div className="m-val" style={{ color: '#ff8a80' }}>{fmtVnd(portStress.stressedTotalVnd)} đ</div>
+                <div className="m-delta">
+                  +{fmtVnd(portStress.stressDeltaVnd)} đ ({Number(portStress.stressedTotalBps).toFixed(1)} bps)
+                </div>
+              </div>
+            </div>
+
+            {portStress.concentrationWarning && (
+              <div className="callout warning" style={{ marginTop: 10 }}>
+                <span>{portStress.concentrationWarning}</span>
+              </div>
+            )}
+
+            <div className="table-wrap" style={{ marginTop: 10 }}>
+              <table className="neo-table compact">
+                <thead>
+                  <tr>
+                    <th>Mã</th>
+                    <th>Nhóm</th>
+                    <th className="num">Tỷ trọng</th>
+                    <th className="num">Phân bổ (VND)</th>
+                    <th className="num">Phủ sổ BT → Stress</th>
+                    <th className="num">Chi phí BT (bps)</th>
+                    <th className="num">Chi phí Stress (bps)</th>
+                    <th className="num">Đóng góp rủi ro Stress</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(portStress.rows || []).map((r: any) => (
+                    <tr key={r.symbol}>
+                      <td className="mono" style={{ fontWeight: 700, color: '#f0f3fa' }}>{r.symbol}</td>
+                      <td>{r.group === 'thin' ? 'Midcap mỏng' : 'VN30 lớn'}</td>
+                      <td className="num">{Number(r.weightPct).toFixed(1)}%</td>
+                      <td className="num">{fmtVnd(r.allocVnd)}</td>
+                      <td className="num">
+                        {Number(r.normalCoveragePct).toFixed(0)}% → {Number(r.stressedCoveragePct).toFixed(0)}%
+                      </td>
+                      <td className="num">{fmtNum(r.normalTotalBps, 2)}</td>
+                      <td className="num" style={{ color: '#ff8a80', fontWeight: 700 }}>
+                        {fmtNum(r.stressedTotalBps, 2)}
+                      </td>
+                      <td className="num">{Number(r.stressedCostSharePct).toFixed(1)}%</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div style={{ marginTop: 10, display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+              <div className="small-caption" style={{ margin: 0, maxWidth: 740 }}>
+                {portStress.disclaimer}
+              </div>
+              <button
+                type="button"
+                className="btn"
+                onClick={() =>
+                  downloadCsv(
+                    `neoscope_portfolio_stress_${session}.csv`,
+                    ['symbol', 'group', 'weight_pct', 'alloc_vnd', 'normal_cov_pct', 'stress_cov_pct', 'normal_total_bps', 'stress_total_bps', 'stress_cost_vnd', 'stress_share_pct'],
+                    (portStress.rows || []).map((r: any) => [
+                      r.symbol,
+                      r.group,
+                      r.weightPct.toFixed(2),
+                      Math.round(r.allocVnd),
+                      r.normalCoveragePct.toFixed(1),
+                      r.stressedCoveragePct.toFixed(1),
+                      r.normalTotalBps ?? '',
+                      r.stressedTotalBps ?? '',
+                      r.stressedCostVnd ?? '',
+                      r.stressedCostSharePct.toFixed(1),
+                    ]),
+                  )
+                }
+              >
+                <Download size={14} /> Xuất báo cáo Stress (.csv)
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 };

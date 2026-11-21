@@ -1,13 +1,14 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { BellRing, ChevronLeft, ChevronRight, Pause, Play, X } from 'lucide-react';
+import { BellRing, ChevronLeft, ChevronRight, Download, FileText, Pause, Play, X } from 'lucide-react';
 import { PlotlyChart } from '../components/PlotlyChart';
-import { C_ACCENT, C_BAD, C_GOOD, fmtNum, fmtVnd, fmtVnHms } from '../lib/format';
+import { C_ACCENT, C_BAD, C_GOOD, downloadCsv, fmtNum, fmtVnd, fmtVnHms } from '../lib/format';
 
 interface ExecutionPageProps {
   dataset: string;
   session: string;
   symbols: string[];
   settings: any;
+  sessionAlerts?: any[];
   preferredSym?: string | null;
   onConsumePreferredSym?: () => void;
   preferredTsMs?: number | null;
@@ -21,6 +22,7 @@ export const ExecutionPage: React.FC<ExecutionPageProps> = ({
   session,
   symbols,
   settings,
+  sessionAlerts = [],
   preferredSym,
   onConsumePreferredSym,
   preferredTsMs,
@@ -1072,6 +1074,171 @@ export const ExecutionPage: React.FC<ExecutionPageProps> = ({
                     <strong>Giả định minh bạch:</strong> {cmp.assumptionNote}
                   </div>
                 )}
+              </div>
+            );
+          })()}
+
+          {estimate?.slicingComparison?.rows?.length > 0 && (() => {
+            const rows: any[] = estimate.slicingComparison.rows;
+            const singleRow = rows.find((r) => r.slices === 1) || rows[0];
+            const bestRow = rows.reduce((best, cur) =>
+              Number(cur.totalBps ?? Infinity) < Number(best.totalBps ?? Infinity) ? cur : best,
+            rows[0]);
+            const totalOrderVnd = Number(estimate.qty || 0) * Number(estimate.mid || 0);
+            const savBps = Number(singleRow.totalBps ?? 0) - Number(bestRow.totalBps ?? 0);
+            const savVnd = (savBps / 1e4) * totalOrderVnd;
+            const symAlerts = (sessionAlerts || []).filter((a: any) => a.symbol === sym);
+            const rareAlerts = symAlerts.filter((a: any) => a.priority === 'P1' || a.priority === 'P2');
+            const latestAlert = symAlerts.length
+              ? symAlerts.reduce((lat: any, cur: any) => (cur.ts_ms > lat.ts_ms ? cur : lat), symAlerts[0])
+              : null;
+            const covPct = Number(estimate.ladder?.coverage ?? 0) * 100;
+            const inBook = covPct >= 99.5;
+            const timeStr = selectedTs ? fmtVnHms(selectedTs.ts) : '—';
+
+            const downloadPlaybookMd = () => {
+              const md = [
+                `# NeoScope Execution Playbook · ${sym} (${session})`,
+                '',
+                `- **Chế độ dữ liệu**: ${dataset} (chỉ đọc · mô phỏng học thuật, không đặt lệnh thật)`,
+                `- **Thời điểm tham chiếu**: ${timeStr} UTC+7`,
+                `- **Hướng & Quy mô**: ${side === -1 ? 'BÁN (quét bid)' : 'MUA (quét ask)'} · ${estimate.qty.toLocaleString('en-US')} cp (~${fmtVnd(totalOrderVnd)} đ)`,
+                `- **Giá mid lúc đến**: ${Math.round(estimate.mid).toLocaleString('en-US')} đ · Đáp ứng sổ 3 mức: ${covPct.toFixed(0)}% (${inBook ? 'Trong sổ (tất định)' : 'Vượt sổ (có phần dư rủi ro)'})`,
+                '',
+                '## 1. Chiến lược chia đợt tối ưu',
+                `- **Khuyến nghị mô phỏng**: ${bestRow.slices === 1 ? '1 lệnh gộp' : `Chia ${bestRow.slices} đợt`} (${Math.round(Number(bestRow.qtyPerSlice ?? 0)).toLocaleString('en-US')} cp/đợt)`,
+                `- **Tổng chi phí all-in (IS + phí + thuế)**: ${fmtNum(bestRow.totalBps, 2)} bps (~${fmtVnd(bestRow.totalVnd)} đ)`,
+                `- **Tiết kiệm so với đi 1 lệnh gộp**: ${savBps >= 0 ? `${savBps.toFixed(2)} bps (~${fmtVnd(savVnd)} đ)` : '0.00 bps'}`,
+                hasFold && estimate.full
+                  ? `- **IS kỳ vọng (full) & Khoảng dự báo 90%**: ${estimate.full.e_is_bps.toFixed(2)} bps · [${estimate.full.lo_bps.toFixed(1)}, ${estimate.full.hi_bps.toFixed(1)}] bps`
+                  : '- **Chế độ dự phòng**: Chưa có tham số walk-forward — dùng chi phí quét sổ 3 mức tất định.',
+                '',
+                '## 2. Bảng so sánh chia đợt',
+                '| Chiến lược | KL/đợt | Phủ sổ (%) | IS (bps) | Phí+Thuế (bps) | Tổng (bps) | Tổng (VND) |',
+                '|---|---:|---:|---:|---:|---:|---:|',
+                ...rows.map(
+                  (r) =>
+                    `| ${r.slices === 1 ? '1 lệnh gộp' : `Chia ${r.slices} đợt`} | ${Math.round(Number(r.qtyPerSlice ?? 0)).toLocaleString('en-US')} | ${fmtNum(r.coveragePct, 0)}% | ${fmtNum(r.estIsBps, 2)} | ${fmtNum(r.feeTaxBps, 2)} | ${fmtNum(r.totalBps, 2)} | ${r.totalVnd != null ? fmtVnd(r.totalVnd) : '—'} |`,
+                ),
+                '',
+                '## 3. Tín hiệu cảnh báo vi cấu trúc trong phiên',
+                symAlerts.length > 0
+                  ? `- Phát hiện **${symAlerts.length}** cảnh báo trên ${sym} trong phiên ${session} (${rareAlerts.length} ca P1/P2). Gần nhất: **${latestAlert.type}** lúc ${fmtVnHms(latestAlert.ts)} UTC+7 (z=${fmtNum(latestAlert.z, 2)}).`
+                  : `- Chưa ghi nhận cảnh báo bất thường nào trên ${sym} trong phiên ${session}.`,
+                '',
+                '---',
+                '*Tuyên bố giới hạn: Tài liệu tổng hợp tự động phục vụ nghiên cứu học thuật & thực hành phân tích vi cấu trúc. Không cấu thành khuyến nghị đầu tư; hệ thống chỉ đọc dữ liệu, không kết nối đặt lệnh thật.*',
+                '',
+              ].join('\n');
+              const blob = new Blob([md], { type: 'text/markdown;charset=utf-8;' });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = `neoscope_playbook_${sym}_${session}.md`;
+              a.click();
+              URL.revokeObjectURL(url);
+            };
+
+            const downloadSlicingCsv = () => {
+              downloadCsv(
+                `neoscope_slicing_${sym}_${session}.csv`,
+                ['symbol', 'session', 'side', 'slices', 'qty_per_slice', 'coverage_pct', 'est_is_bps', 'fee_tax_bps', 'total_bps', 'total_vnd', 'saving_vs_single_bps'],
+                rows.map((r) => [
+                  sym,
+                  session,
+                  side === -1 ? 'SELL' : 'BUY',
+                  r.slices,
+                  Math.round(Number(r.qtyPerSlice ?? 0)),
+                  r.coveragePct,
+                  r.estIsBps,
+                  r.feeTaxBps,
+                  r.totalBps,
+                  r.totalVnd,
+                  r.savingVsSingleBps,
+                ]),
+              );
+            };
+
+            return (
+              <div className="card-panel" id="execution-playbook-card" style={{ marginTop: 14 }}>
+                <div className="h2h-header-row" style={{ marginBottom: 10 }}>
+                  <div>
+                    <div className="narrative-head" style={{ marginBottom: 4 }}>
+                      <span className="narrative-badge">Bloom #6 · Tổng hợp Kịch bản Thực thi</span>
+                      <h4 className="narrative-title">
+                        Execution Playbook cho {sym} · {side === -1 ? 'BÁN' : 'MUA'} {fmtVnd(notional)} đ
+                      </h4>
+                    </div>
+                    <p className="small-caption" style={{ margin: 0 }}>
+                      Tổng hợp phương án chia đợt tối ưu, mức rủi ro dự báo và tín hiệu cảnh báo trong phiên {session}.
+                    </p>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    <button
+                      type="button"
+                      id="download-playbook-md-btn"
+                      className="btn btn-primary"
+                      onClick={downloadPlaybookMd}
+                    >
+                      <FileText size={14} /> Tải Playbook (.md)
+                    </button>
+                    <button
+                      type="button"
+                      id="download-slicing-csv-btn"
+                      className="btn"
+                      onClick={downloadSlicingCsv}
+                    >
+                      <Download size={14} /> Xuất bảng chia đợt (.csv)
+                    </button>
+                  </div>
+                </div>
+
+                <div className="playbook-grid">
+                  <div className="playbook-box">
+                    <div className="playbook-label">Phương án tối ưu chi phí</div>
+                    <div className="playbook-val">
+                      {bestRow.slices === 1 ? '1 lệnh gộp' : `Chia ${bestRow.slices} đợt`}
+                    </div>
+                    <div className="playbook-sub">
+                      {Math.round(Number(bestRow.qtyPerSlice ?? 0)).toLocaleString('en-US')} cp/đợt · Tổng{' '}
+                      <strong className="mono">{fmtNum(bestRow.totalBps, 2)} bps</strong>
+                    </div>
+                  </div>
+                  <div className="playbook-box">
+                    <div className="playbook-label">Tiết kiệm so với 1 lệnh gộp</div>
+                    <div className="playbook-val" style={{ color: savBps > 0.05 ? '#4dd0c1' : '#e8f0fc' }}>
+                      {savBps > 0 ? `${savBps.toFixed(2)} bps` : '0.00 bps'}
+                    </div>
+                    <div className="playbook-sub">
+                      Ước tính giảm ~<strong className="mono">{fmtVnd(Math.max(0, savVnd))} đ</strong> chi phí tác động
+                    </div>
+                  </div>
+                  <div className="playbook-box">
+                    <div className="playbook-label">Chế độ sổ &amp; Rủi ro PI 90%</div>
+                    <div className="playbook-val">{inBook ? 'Trong sổ' : 'Vượt sổ'}</div>
+                    <div className="playbook-sub">
+                      Phủ {covPct.toFixed(0)}% sổ 3 mức ·{' '}
+                      {hasFold && estimate.full
+                        ? `PI90 [${estimate.full.lo_bps.toFixed(1)}, ${estimate.full.hi_bps.toFixed(1)}] bps`
+                        : 'Quét tất định'}
+                    </div>
+                  </div>
+                  <div className="playbook-box">
+                    <div className="playbook-label">Cảnh báo phiên ({sym})</div>
+                    <div className="playbook-val" style={{ color: rareAlerts.length > 0 ? '#fbbf24' : '#4dd0c1' }}>
+                      {symAlerts.length} tín hiệu
+                    </div>
+                    <div className="playbook-sub">
+                      {latestAlert
+                        ? `${rareAlerts.length} P1/P2 · gần nhất ${latestAlert.type} (${fmtVnHms(latestAlert.ts)})`
+                        : 'Không có bất thường vi cấu trúc trong phiên'}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="small-caption" style={{ marginTop: 10, marginBottom: 0 }}>
+                  <strong>Lưu ý sử dụng có trách nhiệm:</strong> Playbook chỉ tổng hợp kịch bản tham khảo học thuật từ sổ lệnh quan sát và giả định chia đợt đều. Hệ thống không tự động gửi lệnh và không thay thế quyết định giao dịch.
+                </div>
               </div>
             );
           })()}

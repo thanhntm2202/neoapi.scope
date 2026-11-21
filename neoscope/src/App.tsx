@@ -20,6 +20,7 @@ import {
   PillRow,
   StatusStrip,
 } from './components/ThemeParts';
+import { GlossaryModal, TermHelpButton } from './components/GlossaryModal';
 import { fmtNum } from './lib/format';
 import {
   computeMarkerPercent,
@@ -109,7 +110,13 @@ export function App() {
   const [preferredTapeSym, setPreferredTapeSym] = useState<string | null>(null);
   const [providerStatus, setProviderStatus] = useState<any>(null);
   const [providerProbe, setProviderProbe] = useState<any>(null);
+  const [neoProbe, setNeoProbe] = useState<any>(null);
   const [probeLoading, setProbeLoading] = useState(false);
+  const [glossaryOpen, setGlossaryOpen] = useState(false);
+  const [chaosBanner, setChaosBanner] = useState<{
+    msg: string;
+    severity: 'warning' | 'info' | 'error';
+  } | null>(null);
 
   // TradingView Quick Symbol Palette (/ or Cmd/Ctrl+K)
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -171,24 +178,28 @@ export function App() {
     };
   }, [boot, dataset]);
 
-  const handleRunProviderProbe = useCallback(async () => {
-    setProbeLoading(true);
-    try {
-      const ds = boot?.settings?.dataset_mode || dataset || '';
-      const r = await fetch('/api/provider/probe', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dataset: ds }),
-      });
-      const d = await r.json();
-      if (r.ok) {
-        if (d.status) setProviderStatus(d.status);
-        if (d.probe) setProviderProbe(d.probe);
+  const handleRunProviderProbe = useCallback(
+    async (target: 'SSI' | 'NEO' | 'BOTH' = 'BOTH') => {
+      setProbeLoading(true);
+      try {
+        const ds = boot?.settings?.dataset_mode || dataset || '';
+        const r = await fetch('/api/provider/probe', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ dataset: ds, target }),
+        });
+        const d = await r.json();
+        if (r.ok) {
+          if (d.status) setProviderStatus(d.status);
+          if (d.probe !== undefined) setProviderProbe(d.probe);
+          if (d.neoProbe !== undefined) setNeoProbe(d.neoProbe);
+        }
+      } finally {
+        setProbeLoading(false);
       }
-    } finally {
-      setProbeLoading(false);
-    }
-  }, [boot?.settings?.dataset_mode, dataset]);
+    },
+    [boot?.settings?.dataset_mode, dataset],
+  );
 
   useEffect(() => {
     if (!session || !boot) {
@@ -248,6 +259,11 @@ export function App() {
       if (e.key === '/') {
         e.preventDefault();
         setPaletteOpen(true);
+        return;
+      }
+      if (e.key === '?') {
+        e.preventDefault();
+        setGlossaryOpen((v) => !v);
         return;
       }
       const num = Number(e.key);
@@ -912,7 +928,7 @@ export function App() {
                 type="button"
                 className="btn btn-full"
                 style={{ marginTop: 8, fontSize: 11.5, padding: '5px 8px' }}
-                onClick={handleRunProviderProbe}
+                onClick={() => handleRunProviderProbe('BOTH')}
                 disabled={probeLoading}
               >
                 {probeLoading ? 'Đang kiểm tra API…' : 'Kiểm tra kết nối API'}
@@ -920,7 +936,7 @@ export function App() {
               {providerProbe && (
                 <div className="live-status-card" style={{ marginTop: 6 }}>
                   <div style={{ color: providerProbe.ok ? '#4dd0c1' : '#fbbf24', fontWeight: 700 }}>
-                    {providerProbe.ok ? 'OK' : `An toàn · ${providerProbe.stage}`} ({providerProbe.latencyMs} ms)
+                    {providerProbe.ok ? 'SSI OK' : `SSI · ${providerProbe.stage}`} ({providerProbe.latencyMs} ms)
                   </div>
                   <div style={{ marginTop: 2 }}>{providerProbe.message}</div>
                 </div>
@@ -937,6 +953,8 @@ export function App() {
               )}
             </div>
           </details>
+
+          <TermHelpButton onClick={() => setGlossaryOpen(true)} />
 
           <button
             type="button"
@@ -973,6 +991,24 @@ export function App() {
           <StatusStrip brand="NEOSCOPE" title={PAGE_TITLES[page]} pills={pills} />
         )}
 
+        {chaosBanner && (
+          <div
+            id="chaos-resilience-banner"
+            className={`callout ${chaosBanner.severity}`}
+            style={{ justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}
+          >
+            <span>{chaosBanner.msg}</span>
+            <button
+              type="button"
+              className="btn"
+              style={{ padding: '3px 8px', fontSize: 11.5 }}
+              onClick={() => setChaosBanner(null)}
+            >
+              <X size={13} /> Đóng
+            </button>
+          </div>
+        )}
+
         {sessionLoading && <div className="skeleton-bar" aria-label="Đang tải dữ liệu phiên" />}
 
         <div key={page} className="page-transition">
@@ -1005,6 +1041,9 @@ export function App() {
           )}
           {page === 'liquidity' && (
             <LiquidityPage
+              dataset={datasetMode}
+              session={session}
+              settings={settings}
               sessionData={sessionData}
               symbols={symbols}
               results={boot.results}
@@ -1018,6 +1057,7 @@ export function App() {
               session={session}
               symbols={symbols}
               settings={settings}
+              sessionAlerts={sessionData?.dayAlerts || []}
               preferredSym={preferredSym}
               onConsumePreferredSym={() => setPreferredSym(null)}
               preferredTsMs={preferredExecTsMs}
@@ -1042,10 +1082,12 @@ export function App() {
             />
           )}
           {page === 'validation' && (
-            <ValidationPage summary={boot.summary} results={boot.results} />
+            <ValidationPage dataset={datasetMode} summary={boot.summary} results={boot.results} />
           )}
           {page === 'data-quality' && (
             <DataQualityPage
+              dataset={datasetMode}
+              allSymbols={allSymsList}
               quality={boot.quality || []}
               qualityMeta={boot.quality_meta || []}
               flagDescriptions={boot.flag_descriptions || {}}
@@ -1054,8 +1096,12 @@ export function App() {
               provider={provider}
               providerStatus={providerStatus}
               providerProbe={providerProbe}
+              neoProbe={neoProbe}
               probeLoading={probeLoading}
               onRunProviderProbe={handleRunProviderProbe}
+              onChaosBanner={(msg, severity) =>
+                setChaosBanner(msg ? { msg, severity: severity || 'warning' } : null)
+              }
             />
           )}
           {page === 'methodology' && <MethodologyPage />}
@@ -1184,6 +1230,12 @@ export function App() {
           </div>
         </div>
       )}
+
+      <GlossaryModal
+        open={glossaryOpen}
+        onClose={() => setGlossaryOpen(false)}
+        onJumpToPage={(p) => setPage(p)}
+      />
     </div>
   );
 }

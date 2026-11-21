@@ -35,8 +35,27 @@ import {
   inspectProviderReadiness,
   testSsiFastConnectConnection,
 } from './server/ssiFastConnect.ts';
+import {
+  computeCalibrationCurve,
+  computeIntradayUShape,
+  computeLiquidityBeta,
+  computePortfolioStress,
+  evaluateAlertThresholdLab,
+  type TruthEventInput,
+} from './server/portfolioAndProfileMath.ts';
+import {
+  buildSystemSelfCheck,
+  fetchSsiRestContext,
+  simulateChaosScenario,
+  testNeoApiConnection,
+  type ChaosScenarioId,
+} from './server/providerExtras.ts';
 
-const PORT = Number(process.env.PORT || 3000);
+const NGINX_PORT = process.env.NGINX_PORT ? Number(process.env.NGINX_PORT) : null;
+const ENV_PORT = process.env.PORT ? Number(process.env.PORT) : null;
+const PORT =
+  Number(process.env.APP_PORT || process.env.DEFAULT_APP_PORT) ||
+  (ENV_PORT && ENV_PORT !== NGINX_PORT ? ENV_PORT : 3000);
 const HOST = '0.0.0.0';
 
 const ALLOWED_DOCS = new Set([
@@ -86,12 +105,63 @@ async function createServer() {
     try {
       const datasetRaw = req.body?.dataset ?? req.query.dataset;
       const dataset = datasetRaw ? String(datasetRaw) : undefined;
+      const target = String(req.body?.target || 'BOTH').toUpperCase();
       const providerSettings = loadProviderSettings(dataset);
       const status = inspectProviderReadiness(providerSettings);
-      const probe = await testSsiFastConnectConnection(providerSettings);
-      res.json({ status, probe });
+      const [probe, neoProbe] = await Promise.all([
+        target === 'NEO' ? Promise.resolve(null) : testSsiFastConnectConnection(providerSettings),
+        target === 'SSI' ? Promise.resolve(null) : testNeoApiConnection(providerSettings),
+      ]);
+      res.json({ status, probe, neoProbe });
     } catch (err: any) {
       res.status(500).json({ error: err?.message || 'Provider probe failed' });
+    }
+  });
+
+  app.get('/api/provider/rest-context', async (req, res) => {
+    try {
+      const dataset = req.query.dataset ? String(req.query.dataset) : undefined;
+      const providerSettings = loadProviderSettings(dataset);
+      const result = await fetchSsiRestContext(providerSettings, {
+        symbol: req.query.symbol ? String(req.query.symbol) : undefined,
+        market: req.query.market ? String(req.query.market) : undefined,
+        fromDate: req.query.fromDate ? String(req.query.fromDate) : undefined,
+        toDate: req.query.toDate ? String(req.query.toDate) : undefined,
+      });
+      res.json(result);
+    } catch (err: any) {
+      const msg = err?.message || 'SSI REST context error';
+      res.status(msg.includes('không hợp lệ') || msg.includes('YYYY-MM-DD') ? 400 : 500).json({ error: msg });
+    }
+  });
+
+  app.post('/api/system/chaos-demo', (req, res) => {
+    const scenarioId = String(req.body?.scenarioId || '') as ChaosScenarioId;
+    const allowed = new Set(['RATE_LIMIT_429', 'STALE_GAP_30S', 'DIRTY_DATA_TRAPS', 'MISSING_FOLD_PARAMS']);
+    if (!allowed.has(scenarioId)) {
+      return res.status(400).json({ error: 'Unknown chaos scenarioId' });
+    }
+    res.json(simulateChaosScenario(scenarioId));
+  });
+
+  app.get('/api/system/self-check', async (req, res) => {
+    try {
+      const dataset = req.query.dataset ? String(req.query.dataset) : undefined;
+      const storeSettings = loadSettings(dataset);
+      const providerSettings = loadProviderSettings(dataset);
+      const summary = dataCache.getSummary(storeSettings);
+      const qualityBundle = await dataCache.getQuality(storeSettings);
+      const availableDatasets = listAvailableDatasets();
+      res.json(
+        buildSystemSelfCheck({
+          settings: providerSettings,
+          summary,
+          qualityMeta: qualityBundle.quality_meta,
+          availableDatasets,
+        }),
+      );
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'Self-check failed' });
     }
   });
 
@@ -440,6 +510,19 @@ async function createServer() {
           depth_ask_vnd: s.depth_ask_vnd,
           spread_bps: s.spread_bps,
           obi: s.obi,
+          microprice: s.microprice,
+          bid1: s.bid1,
+          bid2: s.bid2,
+          bid3: s.bid3,
+          ask1: s.ask1,
+          ask2: s.ask2,
+          ask3: s.ask3,
+          bidvol1: s.bidvol1,
+          bidvol2: s.bidvol2,
+          bidvol3: s.bidvol3,
+          askvol1: s.askvol1,
+          askvol2: s.askvol2,
+          askvol3: s.askvol3,
           d_f_net_val: s.d_f_net_val,
           d_vol: s.d_vol,
           session: s.session,
@@ -783,6 +866,144 @@ async function createServer() {
     }
   });
 
+  app.get('/api/liquidity/profile', async (req, res) => {
+    try {
+      const dataset = req.query.dataset ? String(req.query.dataset) : undefined;
+      const settings = loadSettings(dataset);
+      const allSessions = listSessionDirs(settings.dataset_mode).map((d) => d.date);
+      const reqSession = req.query.session ? String(req.query.session) : 'ALL';
+      const targetSessions =
+        reqSession !== 'ALL' && allSessions.includes(reqSession) ? [reqSession] : allSessions;
+
+      const hasSymbolsParam = req.query.symbols !== undefined;
+      const symbolsParam = String(req.query.symbols || '');
+      const selectedSymbols = hasSymbolsParam
+        ? symbolsParam.split(',').map((s) => s.trim()).filter(Boolean)
+        : settings.allSymbols;
+      const symSet = new Set(selectedSymbols);
+
+      const loaded = await Promise.all(
+        targetSessions.map(async (sDate) => {
+          const [sn, br] = await Promise.all([
+            dataCache.getSnaps(settings, sDate),
+            dataCache.getBars(settings, sDate),
+          ]);
+          return { sn, br };
+        }),
+      );
+      const snapsAll = [];
+      const barsAll = [];
+      for (const { sn, br } of loaded) {
+        for (let i = 0; i < sn.length; i++) snapsAll.push(sn[i]);
+        for (let i = 0; i < br.length; i++) barsAll.push(br[i]);
+      }
+
+      const uShape = computeIntradayUShape(snapsAll, settings, symSet);
+      const liquidityBeta = computeLiquidityBeta(
+        barsAll.filter((b) => symSet.size === 0 || symSet.has(b.symbol)),
+        settings,
+      );
+
+      res.json({
+        sessionsAnalyzed: targetSessions.length,
+        uShape,
+        liquidityBeta,
+      });
+    } catch (err: any) {
+      console.error('[liquidity profile error]', err);
+      res.status(500).json({ error: err?.message || 'Internal server error' });
+    }
+  });
+
+  app.post('/api/portfolio/stress', async (req, res) => {
+    try {
+      const { dataset, session: sessionDate, totalVnd, side, holdings } = req.body as {
+        dataset?: string;
+        session: string;
+        totalVnd: number;
+        side: 1 | -1;
+        holdings: { symbol: string; weightPct: number }[];
+      };
+      const settings = loadSettings(dataset);
+      const sessions = listSessionDirs(settings.dataset_mode).map((d) => d.date);
+      const targetSession = sessionDate && sessions.includes(sessionDate) ? sessionDate : sessions[sessions.length - 1];
+      if (!targetSession) {
+        return res.status(400).json({ error: 'Không tìm thấy phiên curated để chạy stress danh mục.' });
+      }
+      if (!Array.isArray(holdings) || !holdings.length) {
+        return res.status(400).json({ error: 'Danh mục phải có ít nhất 1 mã cổ phiếu.' });
+      }
+      const cleanSide: 1 | -1 = Number(side) === 1 ? 1 : -1;
+      const [snaps, barsLhs] = await Promise.all([
+        dataCache.getSnaps(settings, targetSession),
+        dataCache.getResult(settings, 'bars_lhs'),
+      ]);
+      const dayLhs = barsLhs.filter((b) => b.session_date === targetSession);
+      const out = computePortfolioStress({
+        holdings,
+        totalVnd: Number(totalVnd || 1_000_000_000),
+        side: cleanSide,
+        snaps,
+        barsLhs: dayLhs,
+        settings,
+      });
+      res.json({ session: targetSession, ...out });
+    } catch (err: any) {
+      console.error('[portfolio stress error]', err);
+      res.status(500).json({ error: err?.message || 'Internal server error' });
+    }
+  });
+
+  app.post('/api/alerts/lab', async (req, res) => {
+    try {
+      const { dataset, zThreshold, pctThreshold, persistenceN, cooldownS } = req.body as {
+        dataset?: string;
+        zThreshold?: number;
+        pctThreshold?: number;
+        persistenceN?: number;
+        cooldownS?: number;
+      };
+      const settings = loadSettings(dataset);
+      const sessions = listSessionDirs(settings.dataset_mode).map((d) => d.date);
+      if (!sessions.length) {
+        return res.status(400).json({ error: 'Chưa có phiên curated để chạy Threshold Lab.' });
+      }
+      const snapsBySession = await Promise.all(
+        sessions.map(async (s) => ({
+          session: s,
+          snaps: await dataCache.getSnaps(settings, s),
+        })),
+      );
+      const truthEvents: TruthEventInput[] = [];
+      if (settings.mode === 'SYNTHETIC') {
+        for (const s of sessions) {
+          for (const sym of settings.allSymbols) {
+            const evs = dataCache.getTruthEvents(settings, s, sym);
+            for (const ev of evs) {
+              truthEvents.push({
+                session_date: s,
+                type: String(ev.type),
+                symbol: String(ev.symbol),
+                start_ts: String(ev.start_ts),
+                end_ts: String(ev.end_ts),
+              });
+            }
+          }
+        }
+      }
+      const result = evaluateAlertThresholdLab(snapsBySession, truthEvents, {
+        zThreshold,
+        pctThreshold,
+        persistenceN,
+        cooldownS,
+      });
+      res.json({ mode: settings.mode, sessionsCount: sessions.length, ...result });
+    } catch (err: any) {
+      console.error('[alerts lab error]', err);
+      res.status(500).json({ error: err?.message || 'Internal server error' });
+    }
+  });
+
   app.get('/api/validation/extra', async (req, res) => {
     try {
       const dataset = req.query.dataset ? String(req.query.dataset) : undefined;
@@ -813,7 +1034,40 @@ async function createServer() {
         10,
       );
 
-      res.json({ fullPreds, resilience: resRows, failureCases });
+      const calibrationCurve = computeCalibrationCurve(predictions, 'beyond_book');
+      const calibrationCurveAll = computeCalibrationCurve(predictions, 'all');
+
+      const datasetsInfo = listAvailableDatasets();
+      const liveSummaries = datasetsInfo
+        .filter((d) => d.id !== 'SYNTHETIC')
+        .map((d) => {
+          const liveSettings = loadSettings(d.id);
+          const s = dataCache.getSummary(liveSettings);
+          const fullMetric = Array.isArray(s?.metrics)
+            ? s.metrics.find((m: any) => m.model === 'full' && m.group === 'ALL')
+            : null;
+          return {
+            id: d.id,
+            label: d.label,
+            sessions: d.sessions,
+            hasSummary: Boolean(s && Object.keys(s).length > 0),
+            nOrders: s?.orders?.n ?? 0,
+            maeFullBps: fullMetric?.mae_bps ?? null,
+            lhsIcOverall: s?.lhs_ic_overall ?? null,
+          };
+        });
+
+      res.json({
+        fullPreds,
+        resilience: resRows,
+        failureCases,
+        calibrationCurve,
+        calibrationCurveAll,
+        liveBenchmark: {
+          hasLiveSessions: liveSummaries.some((x) => x.sessions > 0),
+          providers: liveSummaries,
+        },
+      });
     } catch (err: any) {
       res.status(500).json({ error: err?.message || 'Internal server error' });
     }
@@ -836,7 +1090,7 @@ async function createServer() {
   if (process.env.NODE_ENV !== 'production') {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: { middlewareMode: true, hmr: false },
       appType: 'spa',
     });
     app.use(vite.middlewares);
